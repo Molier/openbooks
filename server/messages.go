@@ -19,6 +19,7 @@ const (
 	SEARCH
 	DOWNLOAD
 	RATELIMIT
+	SERVER_LIST
 )
 
 type NotificationType int
@@ -75,6 +76,11 @@ type DownloadResponse struct {
 	Book         string `json:"book"`
 	Name         string `json:"name"`
 	DownloadPath string `json:"downloadPath"`
+}
+
+// ServerListResponse notifies clients that the server list has been updated
+type ServerListResponse struct {
+	StatusResponse
 }
 
 func newRateLimitResponse(remainingSeconds float64) StatusResponse {
@@ -148,5 +154,15 @@ func newErrorResponse(title string) StatusResponse {
 		MessageType:      STATUS,
 		NotificationType: DANGER,
 		Title:            title,
+	}
+}
+
+func newServerListResponse() ServerListResponse {
+	return ServerListResponse{
+		StatusResponse: StatusResponse{
+			MessageType:      SERVER_LIST,
+			NotificationType: SUCCESS,
+			Title:            "Server list updated",
+		},
 	}
 }

@@ -124,5 +124,8 @@ func (server *server) versionHandler(version string) core.HandlerFunc {
 func (server *server) userListHandler(repo *Repository) core.HandlerFunc {
 	return func(text string) {
 		repo.servers = core.ParseServers(text)
+		server.log.Printf("Server list updated: %d elevated users, %d regular users\n",
+			len(repo.servers.ElevatedUsers), len(repo.servers.RegularUsers))
+		server.broadcast(newServerListResponse())
 	}
 }

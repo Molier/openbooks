@@ -10,7 +10,8 @@ export enum MessageType {
   CONNECT,
   SEARCH,
   DOWNLOAD,
-  RATELIMIT
+  RATELIMIT,
+  SERVER_LIST
 }
 
 // Notification is used to show a UI toast notification the the user.

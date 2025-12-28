@@ -129,6 +129,10 @@ const route = (dispatch: AppDispatch, msg: MessageEvent<any>): void => {
       case MessageType.RATELIMIT:
         dispatch(deleteHistoryItem());
         return notification;
+      case MessageType.SERVER_LIST:
+        // Server list has been updated, invalidate cache to refetch
+        dispatch(openbooksApi.util.invalidateTags(["servers"]));
+        return notification;
       default:
         console.error(response);
         return {

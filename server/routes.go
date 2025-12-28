@@ -187,6 +187,13 @@ func (server *server) getBookHandler() http.HandlerFunc {
 		_, fileName := path.Split(r.URL.Path)
 		bookPath := filepath.Join(server.config.DownloadDir, "books", fileName)
 
+		// Set proper headers for mobile browser compatibility
+		// Content-Type ensures browsers recognize the file type correctly
+		w.Header().Set("Content-Type", "application/epub+zip")
+		// Content-Disposition forces download with correct filename
+		// This prevents mobile browsers from adding .zip extension
+		w.Header().Set("Content-Disposition", fmt.Sprintf("attachment; filename=\"%s\"", fileName))
+
 		http.ServeFile(w, r, bookPath)
 
 		if !server.config.Persist {

@@ -2,6 +2,7 @@ import {
   ActionIcon,
   Burger,
   createStyles,
+  Drawer,
   Group,
   MediaQuery,
   Navbar,
@@ -10,7 +11,7 @@ import {
   Tooltip,
   useMantineColorScheme
 } from "@mantine/core";
-import { useLocalStorage } from "@mantine/hooks";
+import { useLocalStorage, useMediaQuery } from "@mantine/hooks";
 import {
   BellSimple,
   IdentificationBadge,
@@ -56,18 +57,14 @@ export default function Sidebar() {
     defaultValue: "history"
   });
 
-  if (!opened) {
-    return <></>;
-  }
+  // Detect mobile screens (smaller than 'sm' breakpoint = 768px)
+  const isMobile = useMediaQuery("(max-width: 768px)");
 
-  return (
-    <Navbar
-      width={{ sm: 300 }}
-      hiddenBreakpoint="sm"
-      hidden={!opened}
-      className={classes.navbar}>
-      <Navbar.Section p="sm">
-        <Group position="apart">
+  // Shared content for both Navbar and Drawer
+  const sidebarContent = (
+    <>
+      <Group p="sm">
+        <Group position="apart" style={{ width: "100%" }}>
           <Text weight="bold" size="lg">
             OpenBooks
           </Text>
@@ -92,7 +89,7 @@ export default function Sidebar() {
           </Group>
         </Group>
 
-        <Text size="sm" color="dimmed">
+        <Text size="sm" color="dimmed" style={{ width: "100%" }}>
           Download eBooks from IRC Highway
         </Text>
 
@@ -100,7 +97,8 @@ export default function Sidebar() {
           size="sm"
           styles={(theme) => ({
             root: {
-              marginTop: theme.spacing.md
+              marginTop: theme.spacing.md,
+              width: "100%"
             },
             label: {
               fontSize: theme.fontSizes.xs
@@ -114,13 +112,13 @@ export default function Sidebar() {
           ]}
           fullWidth
         />
-      </Navbar.Section>
+      </Group>
 
-      <Navbar.Section grow p="xs" style={{ overflow: "auto" }}>
+      <div style={{ flex: 1, padding: "0.5rem", overflow: "auto" }}>
         {index === "history" ? <History /> : <Library />}
-      </Navbar.Section>
+      </div>
 
-      <Navbar.Section className={classes.footer} p="sm">
+      <div className={classes.footer} style={{ padding: "0.75rem" }}>
         <Group position="apart" noWrap>
           <Group>
             {username ? (
@@ -159,7 +157,45 @@ export default function Sidebar() {
             </ActionIcon>
           </Group>
         </Group>
-      </Navbar.Section>
+      </div>
+    </>
+  );
+
+  // On mobile: Use Drawer for overlay + swipe-to-close
+  if (isMobile) {
+    return (
+      <Drawer
+        opened={opened}
+        onClose={() => dispatch(toggleSidebar())}
+        padding={0}
+        size={300}
+        withCloseButton={false}
+        styles={{
+          drawer: {
+            display: "flex",
+            flexDirection: "column",
+            height: "100%"
+          }
+        }}
+        className={classes.navbar}>
+        {sidebarContent}
+      </Drawer>
+    );
+  }
+
+  // On desktop: Use Navbar as before
+  if (!opened) {
+    return <></>;
+  }
+
+  return (
+    <Navbar
+      width={{ sm: 300 }}
+      hiddenBreakpoint="sm"
+      hidden={!opened}
+      className={classes.navbar}
+      style={{ display: "flex", flexDirection: "column" }}>
+      {sidebarContent}
     </Navbar>
   );
 }
