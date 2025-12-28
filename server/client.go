@@ -5,7 +5,6 @@ import (
 	"log"
 	"time"
 
-	"github.com/evan-buss/openbooks/irc"
 	"github.com/google/uuid"
 
 	"github.com/gorilla/websocket"
@@ -44,9 +43,6 @@ type Client struct {
 	// Message to send to the client ws connection
 	send chan interface{}
 
-	// Individual IRC connection per connected client.
-	irc *irc.Conn
-
 	log *log.Logger
 
 	// Context is used to signal when this client should close.
@@ -60,7 +56,6 @@ type Client struct {
 // reads from this goroutine.
 func (server *server) readPump(c *Client) {
 	defer func() {
-		c.irc.Disconnect()
 		c.conn.Close()
 		server.unregister <- c
 	}()

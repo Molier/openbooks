@@ -11,6 +11,7 @@ import (
 	"syscall"
 	"time"
 
+	"github.com/evan-buss/openbooks/irc"
 	"github.com/go-chi/chi/v5"
 	"github.com/go-chi/chi/v5/middleware"
 	"github.com/google/uuid"
@@ -40,6 +41,21 @@ type server struct {
 
 	// The time the last search was performed. Used to rate limit searches.
 	lastSearch time.Time
+
+	// Shared IRC connection for all clients
+	sharedIRC *irc.Conn
+
+	// Mutex to guard IRC operations
+	ircMutex sync.Mutex
+
+	// Flag to track if IRC is connected
+	ircConnected bool
+
+	// Context for IRC reader
+	ircCtx context.Context
+
+	// Cancel function for IRC reader
+	ircCancel context.CancelFunc
 }
 
 // Config contains settings for server
@@ -56,16 +72,25 @@ type Config struct {
 	SearchBot               string
 	DisableBrowserDownloads bool
 	UserAgent               string
+	AutoExtractAll          bool
+	RandomUsername          bool
+	AuthUser                string
+	AuthPass                string
 }
 
 func New(config Config) *server {
+	ircCtx, ircCancel := context.WithCancel(context.Background())
 	return &server{
-		repository: NewRepository(),
-		config:     &config,
-		register:   make(chan *Client),
-		unregister: make(chan *Client),
-		clients:    make(map[uuid.UUID]*Client),
-		log:        log.New(os.Stdout, "SERVER: ", log.LstdFlags|log.Lmsgprefix),
+		repository:   NewRepository(),
+		config:       &config,
+		register:     make(chan *Client),
+		unregister:   make(chan *Client),
+		clients:      make(map[uuid.UUID]*Client),
+		log:          log.New(os.Stdout, "SERVER: ", log.LstdFlags|log.Lmsgprefix),
+		sharedIRC:    irc.New(config.UserName, config.UserAgent),
+		ircConnected: false,
+		ircCtx:       ircCtx,
+		ircCancel:    ircCancel,
 	}
 }
 
@@ -132,6 +157,14 @@ func (server *server) registerGracefulShutdown(cancel context.CancelFunc) {
 	go func() {
 		<-c
 		server.log.Println("Graceful shutdown.")
+		// Disconnect shared IRC connection
+		if server.sharedIRC != nil {
+			server.sharedIRC.Disconnect()
+		}
+		// Cancel IRC context
+		if server.ircCancel != nil {
+			server.ircCancel()
+		}
 		// Close the shutdown channel. Triggering all reader/writer WS handlers to close.
 		cancel()
 		time.Sleep(time.Second)

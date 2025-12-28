@@ -6,7 +6,6 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
-	"github.com/evan-buss/openbooks/irc"
 	"io/fs"
 	"log"
 	"net/http"
@@ -26,6 +25,10 @@ var reactClient embed.FS
 
 func (server *server) registerRoutes() *chi.Mux {
 	router := chi.NewRouter()
+
+	// Apply basic authentication middleware if configured
+	router.Use(server.basicAuthMiddleware)
+
 	router.Handle("/*", server.staticFilesHandler("app/dist"))
 	router.Get("/ws", server.serveWs())
 	router.Get("/stats", server.statsHandler())
@@ -60,9 +63,8 @@ func (server *server) serveWs() http.HandlerFunc {
 		userId, err := uuid.Parse(cookie.Value)
 		_, alreadyConnected := server.clients[userId]
 
-		// If invalid UUID or the same browser tries to connect again or multiple browser connections
-		// Don't connect to IRC or create new client
-		if err != nil || alreadyConnected || len(server.clients) > 0 {
+		// If invalid UUID or the same browser tries to connect again, reject
+		if err != nil || alreadyConnected {
 			w.WriteHeader(http.StatusBadRequest)
 			return
 		}
@@ -81,7 +83,6 @@ func (server *server) serveWs() http.HandlerFunc {
 			conn: conn,
 			send: make(chan interface{}, 128),
 			uuid: userId,
-			irc:  irc.New(server.config.UserName, server.config.UserAgent),
 			log:  log.New(os.Stdout, fmt.Sprintf("CLIENT (%s): ", server.config.UserName), log.LstdFlags|log.Lmsgprefix),
 			ctx:  context.Background(),
 		}
@@ -120,7 +121,7 @@ func (server *server) statsHandler() http.HandlerFunc {
 		for _, client := range server.clients {
 			details := statsReponse{
 				UUID: client.uuid.String(),
-				Name: client.irc.Username,
+				Name: server.sharedIRC.Username,
 				IP:   client.conn.RemoteAddr().String(),
 			}
 

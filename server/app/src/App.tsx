@@ -25,8 +25,10 @@ const useStyles = createStyles(() => ({
     boxSizing: "border-box",
     display: "flex",
     flexWrap: "nowrap",
+    height: "100vh",
     maxHeight: "100vh",
-    minHeight: "100vh"
+    width: "100vw",
+    overflow: "hidden"
   }
 }));
 

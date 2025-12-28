@@ -1,6 +1,7 @@
 package main
 
 import (
+	"fmt"
 	"os"
 	"path"
 	"path/filepath"
@@ -24,13 +25,18 @@ func init() {
 	serverCmd.Flags().BoolVarP(&openBrowser, "browser", "b", false, "Open the browser on server start.")
 	serverCmd.Flags().BoolVar(&serverConfig.Persist, "persist", false, "Persist eBooks in 'dir'. Default is to delete after sending.")
 	serverCmd.Flags().StringVarP(&serverConfig.DownloadDir, "dir", "d", filepath.Join(os.TempDir(), "openbooks"), "The directory where eBooks are saved when persist enabled.")
+	serverCmd.Flags().BoolVar(&serverConfig.AutoExtractAll, "auto-extract", false, "Automatically extract all files from downloaded archives (zips, rars, etc.) and remove the archive.")
 }
 
 var serverCmd = &cobra.Command{
 	Use:   "server",
 	Short: "Run OpenBooks in server mode.",
 	Long:  "Run OpenBooks in server mode. This allows you to use a web interface to search and download eBooks.",
-	PreRun: func(cmd *cobra.Command, args []string) {
+	PreRunE: func(cmd *cobra.Command, args []string) error {
+		// Allow execution if either --name is provided or --random-name is set
+		if globalFlags.UserName == "" && !globalFlags.RandomUsername {
+			return fmt.Errorf("either --name or --random-name flag is required")
+		}
 		bindGlobalServerFlags(&serverConfig)
 		rateLimit, _ := cmd.Flags().GetInt("rate-limit")
 		ensureValidRate(rateLimit, &serverConfig)
@@ -42,6 +48,25 @@ var serverCmd = &cobra.Command{
 			}
 		}
 		serverConfig.Basepath = sanitizePath(serverConfig.Basepath)
+
+		// Check for authentication environment variables if flags aren't set
+		if serverConfig.AuthUser == "" {
+			if envUser, present := os.LookupEnv("AUTH_USER"); present {
+				serverConfig.AuthUser = envUser
+			}
+		}
+		if serverConfig.AuthPass == "" {
+			if envPass, present := os.LookupEnv("AUTH_PASS"); present {
+				serverConfig.AuthPass = envPass
+			}
+		}
+
+		// Log authentication status
+		if serverConfig.AuthUser != "" && serverConfig.AuthPass != "" {
+			fmt.Printf("HTTP Basic Authentication enabled for user: %s\n", serverConfig.AuthUser)
+		}
+
+		return nil
 	},
 	Run: func(cmd *cobra.Command, args []string) {
 		if openBrowser {

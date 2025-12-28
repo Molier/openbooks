@@ -20,12 +20,16 @@ import {
   useReactTable
 } from "@tanstack/react-table";
 import { useVirtualizer } from "@tanstack/react-virtual";
-import { MagnifyingGlass, User } from "phosphor-react";
-import { useMemo, useRef, useState } from "react";
+import { MagnifyingGlass, User, Warning } from "phosphor-react";
+import { useEffect, useMemo, useRef, useState } from "react";
 import { useSelector } from "react-redux";
 import { useGetServersQuery } from "../../state/api";
 import { BookDetail } from "../../state/messages";
-import { sendDownload } from "../../state/stateSlice";
+import {
+  DownloadStatus,
+  retryDownload,
+  sendDownload
+} from "../../state/stateSlice";
 import { RootState, useAppDispatch } from "../../state/store";
 import FacetFilter, {
   ServerFacetEntry,
@@ -57,6 +61,23 @@ export default function BookTable({ books }: BookTableProps) {
   const { ref: elementSizeRef, height, width } = useElementSize();
   const virtualizerRef = useRef();
   const mergedRef = useMergedRef(elementSizeRef, virtualizerRef);
+
+  // Sort books: online servers first, offline last
+  const sortedBooks = useMemo(() => {
+    if (!servers) return books;
+
+    return [...books].sort((a, b) => {
+      const aOnline = servers.includes(a.server);
+      const bOnline = servers.includes(b.server);
+
+      // Online servers come first
+      if (aOnline && !bOnline) return -1;
+      if (!aOnline && bOnline) return 1;
+
+      // Within same category, sort by server name
+      return a.server.localeCompare(b.server);
+    });
+  }, [books, servers]);
 
   const columns = useMemo(() => {
     const cols = (cols: number) => (width / 12) * cols;
@@ -144,15 +165,22 @@ export default function BookTable({ books }: BookTableProps) {
         header: "Download",
         size: cols(1),
         enableColumnFilter: false,
-        cell: ({ row }) => (
-          <DownloadButton book={row.original.full}></DownloadButton>
-        )
+        cell: ({ row }) => {
+          const online = servers?.includes(row.original.server) ?? false;
+          return (
+            <DownloadButton
+              book={row.original.full}
+              serverName={row.original.server}
+              serverOnline={online}
+            />
+          );
+        }
       })
     ];
   }, [width, servers]);
 
   const table = useReactTable({
-    data: books,
+    data: sortedBooks,
     columns: columns,
     enableFilters: true,
     columnResizeMode: "onChange",
@@ -254,33 +282,128 @@ export default function BookTable({ books }: BookTableProps) {
   );
 }
 
-function DownloadButton({ book }: { book: string }) {
+function DownloadButton({
+  book,
+  serverName,
+  serverOnline
+}: {
+  book: string;
+  serverName: string;
+  serverOnline: boolean;
+}) {
   const dispatch = useAppDispatch();
 
-  const [clicked, setClicked] = useState(false);
+  const download = useSelector(
+    (state: RootState) => state.state.downloads[book]
+  );
   const isInFlight = useSelector((state: RootState) =>
     state.state.inFlightDownloads.includes(book)
   );
 
-  // Prevent hitting the same button multiple times
+  const [timeElapsed, setTimeElapsed] = useState(0);
+
+  // Track elapsed time for status messages
+  useEffect(() => {
+    if (!download || download.status !== DownloadStatus.PENDING) {
+      setTimeElapsed(0);
+      return;
+    }
+
+    const interval = setInterval(() => {
+      const elapsed = Math.floor((Date.now() - download.timestamp) / 1000);
+      setTimeElapsed(elapsed);
+    }, 1000);
+
+    return () => clearInterval(interval);
+  }, [download]);
+
+  const getStatusMessage = () => {
+    if (!download) return "Download";
+
+    switch (download.status) {
+      case DownloadStatus.PENDING:
+        if (timeElapsed < 5) return `Requesting...`;
+        if (timeElapsed < 30) return `Waiting...`;
+        return `Still waiting...`;
+      case DownloadStatus.DOWNLOADING:
+        return "Downloading...";
+      case DownloadStatus.SUCCESS:
+        return "✓ Done";
+      case DownloadStatus.TIMEOUT:
+        return "Retry";
+      case DownloadStatus.FAILED:
+        return "Retry";
+      default:
+        return "Download";
+    }
+  };
+
   const onClick = () => {
-    if (clicked) return;
-    dispatch(sendDownload(book));
-    setClicked(true);
+    if (download?.status === DownloadStatus.PENDING || isInFlight) return;
+
+    if (
+      download?.status === DownloadStatus.TIMEOUT ||
+      download?.status === DownloadStatus.FAILED
+    ) {
+      dispatch(retryDownload({ book, serverName }));
+    } else {
+      dispatch(sendDownload({ book, serverName }));
+    }
+  };
+
+  const isDisabled =
+    download?.status === DownloadStatus.PENDING ||
+    download?.status === DownloadStatus.DOWNLOADING ||
+    isInFlight;
+
+  const getButtonColor = () => {
+    if (download?.status === DownloadStatus.SUCCESS) return "green";
+    if (
+      download?.status === DownloadStatus.TIMEOUT ||
+      download?.status === DownloadStatus.FAILED
+    )
+      return "orange";
+    if (!serverOnline) return "gray";
+    return "blue";
   };
 
   return (
-    <Button
-      compact
-      size="xs"
-      radius="sm"
-      onClick={onClick}
-      sx={{ fontWeight: "normal", width: 80 }}>
-      {isInFlight ? (
-        <Loader variant="dots" color="gray" />
-      ) : (
-        <span>Download</span>
-      )}
-    </Button>
+    <Tooltip
+      label={
+        !serverOnline
+          ? "Server may be offline - download might not work"
+          : download?.status === DownloadStatus.TIMEOUT
+          ? "Server did not respond - click to retry"
+          : ""
+      }
+      disabled={serverOnline && !download}
+      position="left">
+      <Button
+        compact
+        size="xs"
+        radius="sm"
+        onClick={onClick}
+        disabled={isDisabled}
+        color={getButtonColor()}
+        variant={!serverOnline ? "subtle" : "filled"}
+        sx={{ fontWeight: "normal", width: 95, fontSize: "11px", touchAction: "manipulation" }}
+        aria-label={
+          !serverOnline
+            ? `Download from ${serverName} (may be offline)`
+            : download?.status === DownloadStatus.TIMEOUT
+            ? `Retry download from ${serverName}`
+            : `Download from ${serverName}`
+        }
+        aria-busy={isDisabled}
+        leftIcon={
+          !serverOnline ? (
+            <Warning size={12} weight="fill" aria-hidden="true" />
+          ) : isDisabled ? (
+            <Loader size="xs" variant="dots" aria-hidden="true" />
+          ) : null
+        }>
+        {getStatusMessage()}
+      </Button>
+    </Tooltip>
   );
 }

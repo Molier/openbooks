@@ -41,6 +41,7 @@ export interface SearchResponse extends Response {
 // user download.
 export interface DownloadResponse extends Response {
   downloadPath?: string;
+  book: string;
 }
 
 export interface BookDetail {

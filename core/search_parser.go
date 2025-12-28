@@ -7,6 +7,7 @@ import (
 	"fmt"
 	"io"
 	"os"
+	"regexp"
 	"sort"
 	"strings"
 )
@@ -195,57 +196,98 @@ func parseLineV2(line string) (BookDetail, error) {
 		return line[1:firstSpace], nil
 	}
 
-	getAuthor := func(line string) (string, error) {
+	getAuthorAndSkipHash := func(line string) (string, int, error) {
 		firstSpace := strings.Index(line, " ")
 		dashChar := strings.Index(line, " - ")
 		if dashChar == -1 {
-			return "", errors.New("unable to parse author")
+			return "", 0, errors.New("unable to parse author")
 		}
-		author := line[firstSpace+len(" ") : dashChar]
+
+		potentialAuthor := line[firstSpace+len(" ") : dashChar]
 
 		// Handles case with weird author characters %\w% ("%F77FE9FF1CCD% Michael Haag")
-		if strings.Contains(author, "%") {
-			split := strings.SplitAfterN(author, " ", 2)
-			return split[1], nil
+		if strings.Contains(potentialAuthor, "%") {
+			split := strings.SplitAfterN(potentialAuthor, " ", 2)
+			if len(split) > 1 {
+				return split[1], dashChar, nil
+			}
 		}
 
-		return author, nil
+		// Strategy 1: Check if this looks like a hash (no spaces, followed by another " - ")
+		// This handles formats like: !Server HASH - Author - Title
+		if !strings.Contains(potentialAuthor, " ") {
+			// Look for second dash
+			secondDash := strings.Index(line[dashChar+len(" - "):], " - ")
+			if secondDash != -1 {
+				// Extract author between first and second dash
+				actualAuthor := line[dashChar+len(" - ") : dashChar+len(" - ")+secondDash]
+				// Return author and position after second dash
+				return actualAuthor, dashChar + len(" - ") + secondDash, nil
+			}
+		}
+
+		// Strategy 2: Default format !Server Author - Title
+		return potentialAuthor, dashChar, nil
 	}
 
-	getTitle := func(line string) (string, string, int) {
-		title := ""
-		fileFormat := ""
-		endIndex := -1
-		// Get the Title
-		for _, ext := range fileTypes { //Loop through each possible file extension we've got on record
-			endTitle := strings.Index(line, "."+ext) // check if it contains our extension
-			if endTitle == -1 {
-				continue
-			}
-			fileFormat = ext
-			if ext == "rar" || ext == "zip" { // If the extension is .rar or .zip the actual format is contained in ()
-				for _, ext2 := range fileTypes[:len(fileTypes)-2] { // Range over the eBook formats (exclude archives)
-					if strings.Contains(strings.ToLower(line[:endTitle]), ext2) {
-						fileFormat = ext2
+	getTitle := func(line string, authorEndPos int) (string, string, int) {
+		// Start searching for the title after the author section
+		searchableLine := line[authorEndPos+len(" - "):]
+
+		// Regex to find formats like (epub), [pdf], etc.
+		re := regexp.MustCompile(`(?i)[\(\[](\w+)[\)\]]`)
+		matches := re.FindStringSubmatchIndex(searchableLine)
+
+		if len(matches) > 0 {
+			// The format is in the first capture group
+			format := strings.ToLower(searchableLine[matches[2]:matches[3]])
+			
+			// Title is everything before the match
+			title := strings.TrimSpace(searchableLine[:matches[0]])
+			
+			// Handle compressed files containing other formats
+			if format == "rar" || format == "zip" {
+				for _, ext2 := range fileTypes[:len(fileTypes)-2] {
+					if strings.Contains(strings.ToLower(title), ext2) {
+						return title, ext2, authorEndPos + len(" - ") + matches[1]
 					}
 				}
 			}
-			startIndex := strings.Index(line, " - ")
-			title = line[startIndex+len(" - ") : endTitle]
-			endIndex = endTitle
+
+			return title, format, authorEndPos + len(" - ") + matches[1]
 		}
 
-		return title, fileFormat, endIndex
+		// Fallback for .ext style formats
+		for _, ext := range fileTypes {
+			if endTitle := strings.LastIndex(searchableLine, "."+ext); endTitle != -1 {
+				title := strings.TrimSpace(searchableLine[:endTitle])
+				return title, ext, authorEndPos + len(" - ") + endTitle
+			}
+		}
+
+		return "", "", -1
 	}
 
 	getSize := func(line string) (string, int) {
-		const delimiter = " ::INFO:: "
-		infoIndex := strings.LastIndex(line, delimiter)
+		// Regex to find file sizes (e.g., "533.4 KB", "12.8 MB", "2.1 GB")
+		// It looks for a number (with optional decimal part) followed by KB, MB, or GB, case-insensitive.
+		re := regexp.MustCompile(`(\d+(\.\d+)?)\s*(KB|MB|GB)`)
+		matches := re.FindStringSubmatch(line)
 
-		if infoIndex != -1 {
-			// Handle cases when there is additional info after the file size (ex ::HASH:: )
+		if len(matches) > 1 {
+			// matches[0] is the full match (e.g., "533.4 KB")
+			// The position returned is the end of the size string to help parsing the rest of the line.
+			endIndex := strings.Index(line, matches[0]) + len(matches[0])
+			return matches[0], endIndex
+		}
+
+		// Fallback for formats with "::INFO::" delimiter
+		const delimiter = " ::INFO:: "
+		if infoIndex := strings.LastIndex(line, delimiter); infoIndex != -1 {
 			parts := strings.Split(line[infoIndex+len(delimiter):], " ")
-			return parts[0], infoIndex
+			if len(parts) > 0 {
+				return parts[0], infoIndex
+			}
 		}
 
 		return "N/A", len(line)
@@ -256,12 +298,12 @@ func parseLineV2(line string) (BookDetail, error) {
 		return BookDetail{}, err
 	}
 
-	author, err := getAuthor(line)
+	author, authorEndPos, err := getAuthorAndSkipHash(line)
 	if err != nil {
 		return BookDetail{}, err
 	}
 
-	title, format, titleIndex := getTitle(line)
+	title, format, titleIndex := getTitle(line, authorEndPos)
 	if titleIndex == -1 {
 		return BookDetail{}, errors.New("unable to parse title")
 	}

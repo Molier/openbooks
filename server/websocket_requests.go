@@ -41,7 +41,7 @@ func (server *server) routeMessage(message Request, c *Client) {
 	case SEARCH:
 		c.sendSearchRequest(obj.(*SearchRequest), server)
 	case DOWNLOAD:
-		c.sendDownloadRequest(obj.(*DownloadRequest))
+		c.sendDownloadRequest(obj.(*DownloadRequest), server)
 	default:
 		server.log.Println("Unknown request type received.")
 	}
@@ -49,33 +49,43 @@ func (server *server) routeMessage(message Request, c *Client) {
 
 // handle ConnectionRequests and either connect to the server or do nothing
 func (c *Client) startIrcConnection(server *server) {
-	err := core.Join(c.irc, server.config.Server, server.config.EnableTLS)
-	if err != nil {
-		c.log.Println(err)
-		c.send <- newErrorResponse("Unable to connect to IRC server.")
-		return
-	}
+	server.ircMutex.Lock()
+	defer server.ircMutex.Unlock()
 
-	handler := server.NewIrcEventHandler(c)
-
-	if server.config.Log {
-		logger, _, err := util.CreateLogFile(c.irc.Username, server.config.DownloadDir)
+	// If IRC is not connected, connect now
+	if !server.ircConnected {
+		err := core.Join(server.sharedIRC, server.config.Server, server.config.EnableTLS)
 		if err != nil {
-			server.log.Println(err)
+			c.log.Println(err)
+			c.send <- newErrorResponse("Unable to connect to IRC server.")
+			return
 		}
-		handler[core.Message] = func(text string) { logger.Println(text) }
-	}
 
-	go core.StartReader(c.ctx, c.irc, handler)
+		handler := server.NewIrcEventHandler()
+
+		if server.config.Log {
+			logger, _, err := util.CreateLogFile(server.sharedIRC.Username, server.config.DownloadDir)
+			if err != nil {
+				server.log.Println(err)
+			} else {
+				// Only add message handler if logger was successfully created
+				handler[core.Message] = func(text string) { logger.Println(text) }
+			}
+		}
+
+		go core.StartReader(server.ircCtx, server.sharedIRC, handler)
+		server.ircConnected = true
+		server.log.Printf("Shared IRC connection established with username: %s\n", server.sharedIRC.Username)
+	}
 
 	c.send <- ConnectionResponse{
 		StatusResponse: StatusResponse{
 			MessageType:      CONNECT,
 			NotificationType: SUCCESS,
 			Title:            "Welcome, connection established.",
-			Detail:           fmt.Sprintf("IRC username %s", c.irc.Username),
+			Detail:           fmt.Sprintf("IRC username %s", server.sharedIRC.Username),
 		},
-		Name: c.irc.Username,
+		Name: server.sharedIRC.Username,
 	}
 }
 
@@ -93,14 +103,14 @@ func (c *Client) sendSearchRequest(s *SearchRequest, server *server) {
 		return
 	}
 
-	core.SearchBook(c.irc, server.config.SearchBot, s.Query)
+	core.SearchBook(server.sharedIRC, server.config.SearchBot, s.Query)
 	server.lastSearch = time.Now()
 
 	c.send <- newStatusResponse(NOTIFY, "Search request sent.")
 }
 
 // handle DownloadRequests by sending the request to the book server
-func (c *Client) sendDownloadRequest(d *DownloadRequest) {
-	core.DownloadBook(c.irc, d.Book)
+func (c *Client) sendDownloadRequest(d *DownloadRequest, server *server) {
+	core.DownloadBook(server.sharedIRC, d.Book)
 	c.send <- newStatusResponse(NOTIFY, "Download request received.")
 }

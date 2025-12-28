@@ -72,6 +72,7 @@ type SearchResponse struct {
 // DownloadResponse is a response that sends the requested book to the client
 type DownloadResponse struct {
 	StatusResponse
+	Book         string `json:"book"`
 	Name         string `json:"name"`
 	DownloadPath string `json:"downloadPath"`
 }
@@ -108,7 +109,7 @@ func newSearchResponse(results []core.BookDetail, errors []core.ParseError) Sear
 	}
 }
 
-func newDownloadResponse(filePath string, disableBrowserDownloads bool) DownloadResponse {
+func newDownloadResponse(book, filePath string, disableBrowserDownloads bool) DownloadResponse {
 	// If we don't want to autodownload the file, show the user the path to the file
 	// otherwise just show file name.
 	if !disableBrowserDownloads {
@@ -122,6 +123,7 @@ func newDownloadResponse(filePath string, disableBrowserDownloads bool) Download
 			Title:            "Book file received.",
 			Detail:           filePath,
 		},
+		Book: book,
 	}
 
 	// If we want to autodownload the file, add the path to the response

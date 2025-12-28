@@ -10,6 +10,10 @@ import (
 )
 
 func DownloadExtractDCCString(baseDir, dccStr string, progress io.Writer) (string, error) {
+	return DownloadExtractDCCStringWithOptions(baseDir, dccStr, progress, false)
+}
+
+func DownloadExtractDCCStringWithOptions(baseDir, dccStr string, progress io.Writer, extractAll bool) (string, error) {
 	// Download the file and wait until it is completed
 	download, err := dcc.ParseString(dccStr)
 	if err != nil {
@@ -37,7 +41,12 @@ func DownloadExtractDCCString(baseDir, dccStr string, progress io.Writer) (strin
 		return renameTempFile(dccPath), nil
 	}
 
-	extractedPath, err := util.ExtractArchive(dccPath)
+	var extractedPath string
+	if extractAll {
+		extractedPath, err = util.ExtractAllFiles(dccPath)
+	} else {
+		extractedPath, err = util.ExtractArchive(dccPath)
+	}
 	if err != nil {
 		return "", err
 	}

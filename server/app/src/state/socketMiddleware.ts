@@ -18,11 +18,16 @@ import {
 } from "./messages";
 import { addNotification } from "./notificationSlice";
 import {
+  cancelSearch,
+  clearDownloadTimeout,
+  DownloadStatus,
+  removeDownload,
   removeInFlightDownload,
   sendMessage,
   setConnectionState,
   setSearchResults,
-  setUsername
+  setUsername,
+  updateDownloadStatus
 } from "./stateSlice";
 import { AppDispatch, RootState } from "./store";
 import { displayNotification, downloadFile } from "./util";
@@ -72,6 +77,16 @@ const onOpen = (dispatch: AppDispatch): void => {
 const onClose = (dispatch: AppDispatch): void => {
   console.log("WebSocket closed.");
   dispatch(setConnectionState(false));
+
+  // Clear any pending searches to prevent stuck state
+  // This handles the case where user closes browser mid-search
+  dispatch(cancelSearch());
+
+  displayNotification({
+    appearance: NotificationType.WARNING,
+    title: "Connection lost. Refresh page to reconnect.",
+    timestamp: new Date().getTime()
+  });
 };
 
 const route = (dispatch: AppDispatch, msg: MessageEvent<any>): void => {
@@ -93,9 +108,23 @@ const route = (dispatch: AppDispatch, msg: MessageEvent<any>): void => {
         dispatch(setSearchResults(response as SearchResponse));
         return notification;
       case MessageType.DOWNLOAD:
-        downloadFile((response as DownloadResponse)?.downloadPath);
+        const downloadResponse = response as DownloadResponse;
+        downloadFile(downloadResponse?.downloadPath);
         dispatch(openbooksApi.util.invalidateTags(["books"]));
-        dispatch(removeInFlightDownload());
+
+        const book = downloadResponse.book;
+
+        // Clear timeout and update status
+        if (book) {
+          dispatch(clearDownloadTimeout(book));
+          dispatch(updateDownloadStatus({ book, status: DownloadStatus.SUCCESS }));
+          // Clean up after 5 seconds
+          setTimeout(() => {
+            dispatch(removeDownload(book));
+          }, 5000);
+        }
+
+        dispatch(removeInFlightDownload(book));
         return notification;
       case MessageType.RATELIMIT:
         dispatch(deleteHistoryItem());

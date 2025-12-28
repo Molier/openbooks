@@ -1,0 +1,22 @@
+services:
+  openbooks:
+    build: .
+    container_name: openbooks-improved
+    ports:
+      - "8383:80"
+    volumes:
+      - ./books:/books
+    command: ["--random-name", "--server", "irc.irchighway.net:6667", "--tls=false", "--log", "server", "--dir", "/books", "--port", "80", "--persist", "--auto-extract"]
+    environment:
+      # Set your authentication credentials here
+      - AUTH_USER=admin
+      - AUTH_PASS=changeme123
+      # Optional: Set base path if behind reverse proxy
+      # - BASE_PATH=/openbooks/
+    restart: unless-stopped
+    networks:
+      - openbooks-net
+
+networks:
+  openbooks-net:
+    driver: bridge

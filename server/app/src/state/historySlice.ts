@@ -7,7 +7,7 @@ import { AppDispatch, RootState } from "./store";
 type HistoryItem = {
   query: string;
   timestamp: number;
-  results?: BookDetail[];
+  results?: BookDetail[] | null;
   errors?: ParseError[];
 };
 
