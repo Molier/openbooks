@@ -11,7 +11,8 @@ export enum MessageType {
   SEARCH,
   DOWNLOAD,
   RATELIMIT,
-  SERVER_LIST
+  SERVER_LIST,
+  DOWNLOAD_PROGRESS
 }
 
 // Notification is used to show a UI toast notification the the user.
@@ -43,6 +44,13 @@ export interface SearchResponse extends Response {
 export interface DownloadResponse extends Response {
   downloadPath?: string;
   book: string;
+}
+
+export interface DownloadProgressResponse extends Response {
+  book: string;
+  received: number;
+  total: number;
+  percent: number;
 }
 
 export interface BookDetail {

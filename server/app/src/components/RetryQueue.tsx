@@ -1,24 +1,23 @@
 import {
   ActionIcon,
   Badge,
-  Button,
   Card,
   Group,
   Stack,
   Text,
   Tooltip
 } from "@mantine/core";
-import { ArrowCounterClockwise, X } from "phosphor-react";
-import { useSelector } from "react-redux";
+import { ArrowCounterClockwise, X } from "@phosphor-icons/react";
 import {
   removeFromRetryQueue,
   retryDownload
 } from "../state/stateSlice";
-import { RootState, useAppDispatch } from "../state/store";
+import { Download } from "../state/stateSlice";
+import { useAppDispatch, useAppSelector } from "../state/store";
 
 export default function RetryQueue() {
   const dispatch = useAppDispatch();
-  const retryQueue = useSelector((state: RootState) => state.state.retryQueue);
+  const retryQueue = useAppSelector((state) => state.state.retryQueue);
 
   if (retryQueue.length === 0) return null;
 
@@ -59,7 +58,7 @@ export default function RetryQueue() {
         </Text>
 
         <Stack spacing="xs">
-          {retryQueue.slice(0, 5).map((download) => (
+          {retryQueue.slice(0, 5).map((download: Download) => (
             <Card key={download.book} p="xs" withBorder>
               <Group position="apart" noWrap>
                 <Stack spacing={2} sx={{ flex: 1, minWidth: 0 }}>

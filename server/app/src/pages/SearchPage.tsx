@@ -7,21 +7,23 @@ import {
   Group,
   Image,
   MediaQuery,
+  Select,
   Stack,
   Text,
   TextInput,
   Title
 } from "@mantine/core";
-import { MagnifyingGlass, Sidebar } from "phosphor-react";
+import { MagnifyingGlass, Sidebar } from "@phosphor-icons/react";
 import { FormEvent, useEffect, useMemo, useState } from "react";
 import image from "../assets/reading.svg";
 import BookCard from "../components/cards/BookCard";
 import ErrorCard from "../components/cards/ErrorCard";
 import RetryQueue from "../components/RetryQueue";
 import { useGetServersQuery } from "../state/api";
-import { MessageType } from "../state/messages";
+import { MessageType, ParseError } from "../state/messages";
 import {
-  cancelSearch,
+  cancelSearchWithCleanup,
+  Download,
   retryDownload,
   sendMessage,
   sendSearch,
@@ -59,12 +61,13 @@ export default function SearchPage() {
 
   const [searchQuery, setSearchQuery] = useState("");
   const [showErrors, setShowErrors] = useState(false);
+  const [sortMode, setSortMode] = useState("relevance");
 
   // Periodic retry processor - check every minute
   useEffect(() => {
     const interval = setInterval(() => {
       const now = Date.now();
-      retryQueue.forEach((download) => {
+      retryQueue.forEach((download: Download) => {
         // Retry if nextRetry time has passed and retry count < 24 (1 day of hourly retries)
         if (
           download.nextRetry &&
@@ -94,8 +97,31 @@ export default function SearchPage() {
   // Group books for card display
   const groupedBooks = useMemo(() => {
     if (!activeItem?.results) return [];
-    return groupBooks(activeItem.results, servers);
-  }, [activeItem?.results, servers]);
+    const grouped = groupBooks(activeItem.results, servers);
+
+    const parseSize = (size: string): number => {
+      const match = size.trim().match(/^([\d.]+)\s*(KB|MB|GB)$/i);
+      if (!match) return 0;
+      const value = parseFloat(match[1]);
+      const unit = match[2].toUpperCase();
+      if (unit === "GB") return value * 1024 * 1024 * 1024;
+      if (unit === "MB") return value * 1024 * 1024;
+      return value * 1024;
+    };
+
+    switch (sortMode) {
+      case "title-asc":
+        return [...grouped].sort((a, b) => a.title.localeCompare(b.title));
+      case "author-asc":
+        return [...grouped].sort((a, b) => a.author.localeCompare(b.author));
+      case "size-desc":
+        return [...grouped].sort(
+          (a, b) => parseSize(b.bestSource.size) - parseSize(a.bestSource.size)
+        );
+      default:
+        return grouped;
+    }
+  }, [activeItem?.results, servers, sortMode]);
 
   const searchHandler = (event: FormEvent) => {
     event.preventDefault();
@@ -160,7 +186,7 @@ export default function SearchPage() {
             <Button
               color="red"
               radius="md"
-              onClick={() => dispatch(cancelSearch())}
+              onClick={() => dispatch(cancelSearchWithCleanup())}
               variant="filled"
               sx={{ minWidth: 80 }}>
               Cancel
@@ -202,6 +228,21 @@ export default function SearchPage() {
               </Button>
             )}
           </Group>
+          {!showErrors && groupedBooks.length > 1 && (
+            <Select
+              size="xs"
+              value={sortMode}
+              onChange={(value) => setSortMode(value || "relevance")}
+              data={[
+                { value: "relevance", label: "Best source" },
+                { value: "title-asc", label: "Title A-Z" },
+                { value: "author-asc", label: "Author A-Z" },
+                { value: "size-desc", label: "Largest first" }
+              ]}
+              aria-label="Sort results"
+              sx={{ minWidth: 150 }}
+            />
+          )}
         </div>
       )}
 
@@ -237,7 +278,7 @@ export default function SearchPage() {
             ))}
 
           {showErrors &&
-            (activeItem?.errors ?? []).map((error, index) => (
+            (activeItem?.errors ?? []).map((error: ParseError, index: number) => (
               <ErrorCard key={`error-${index}`} error={error} />
             ))}
         </div>

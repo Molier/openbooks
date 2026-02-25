@@ -1,7 +1,7 @@
 import { Badge, Button, Card, Code, Group, Stack, Text } from "@mantine/core";
 import { useClipboard } from "@mantine/hooks";
 import { showNotification } from "@mantine/notifications";
-import { ClipboardText, Warning } from "phosphor-react";
+import { ClipboardText, Warning } from "@phosphor-icons/react";
 import { ParseError } from "../../state/messages";
 
 interface ErrorCardProps {

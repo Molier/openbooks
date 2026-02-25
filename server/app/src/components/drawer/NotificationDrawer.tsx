@@ -10,21 +10,18 @@ import {
   useMantineColorScheme
 } from "@mantine/core";
 import { AnimatePresence, motion } from "framer-motion";
-import { BellSimpleSlash } from "phosphor-react";
-import { useSelector } from "react-redux";
-import { NotificationType } from "../../state/messages";
+import { BellSimpleSlash } from "@phosphor-icons/react";
+import { Notification as AppNotification, NotificationType } from "../../state/messages";
 import {
   clearNotifications,
   dismissNotification,
   toggleDrawer
 } from "../../state/notificationSlice";
-import { RootState, useAppDispatch } from "../../state/store";
+import { useAppDispatch, useAppSelector } from "../../state/store";
 import { defaultAnimation } from "../../utils/animation";
 
 export default function NotificationDrawer() {
-  const { isOpen, notifications } = useSelector(
-    (store: RootState) => store.notifications
-  );
+  const { isOpen, notifications } = useAppSelector((store) => store.notifications);
   const dispatch = useAppDispatch();
 
   const { colorScheme } = useMantineColorScheme();
@@ -83,7 +80,7 @@ export default function NotificationDrawer() {
           spacing="xs"
           style={{ overflow: "scroll", height: "calc(100% - 44px)" }}>
           <AnimatePresence mode="popLayout">
-            {notifications.map((notif) => (
+            {notifications.map((notif: AppNotification) => (
               <motion.div {...defaultAnimation} key={notif.timestamp}>
                 <Tooltip
                   position="left"

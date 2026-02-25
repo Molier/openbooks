@@ -23,6 +23,7 @@ export interface Download {
   status: DownloadStatus;
   timestamp: number;
   timeoutId?: number;
+  progress: number;
   retryCount: number;
   nextRetry?: number;
 }
@@ -54,6 +55,24 @@ const initialState: AppState = {
   inFlightDownloads: [],
   downloads: {},
   retryQueue: []
+};
+
+const downloadTimeouts = new Map<string, number>();
+let searchTimeoutHandle: number | undefined;
+
+const clearDownloadTimer = (book: string) => {
+  const timeoutId = downloadTimeouts.get(book);
+  if (timeoutId) {
+    clearTimeout(timeoutId);
+    downloadTimeouts.delete(book);
+  }
+};
+
+const clearSearchTimer = () => {
+  if (searchTimeoutHandle) {
+    clearTimeout(searchTimeoutHandle);
+    searchTimeoutHandle = undefined;
+  }
 };
 
 const stateSlice = createSlice({
@@ -92,6 +111,7 @@ const stateSlice = createSlice({
         serverName,
         status: DownloadStatus.PENDING,
         timestamp: Date.now(),
+        progress: 0,
         retryCount: 0
       };
     },
@@ -102,6 +122,18 @@ const stateSlice = createSlice({
       const { book, status } = action.payload;
       if (state.downloads[book]) {
         state.downloads[book].status = status;
+        if (status === DownloadStatus.SUCCESS) {
+          state.downloads[book].progress = 100;
+        }
+      }
+    },
+    updateDownloadProgress(
+      state,
+      action: PayloadAction<{ book: string; progress: number }>
+    ) {
+      const { book, progress } = action.payload;
+      if (state.downloads[book]) {
+        state.downloads[book].progress = Math.max(0, Math.min(100, progress));
       }
     },
     setDownloadTimeout(
@@ -116,15 +148,11 @@ const stateSlice = createSlice({
     clearDownloadTimeout(state, action: PayloadAction<string>) {
       const book = action.payload;
       if (state.downloads[book]?.timeoutId) {
-        clearTimeout(state.downloads[book].timeoutId);
         delete state.downloads[book].timeoutId;
       }
     },
     removeDownload(state, action: PayloadAction<string>) {
       const book = action.payload;
-      if (state.downloads[book]?.timeoutId) {
-        clearTimeout(state.downloads[book].timeoutId);
-      }
       delete state.downloads[book];
     },
     addToRetryQueue(state, action: PayloadAction<Download>) {
@@ -152,24 +180,13 @@ const stateSlice = createSlice({
       state.isSidebarOpen = !state.isSidebarOpen;
     },
     setSearchTimeout(state, action: PayloadAction<number>) {
-      // Clear any existing timeout
-      if (state.searchTimeoutId) {
-        clearTimeout(state.searchTimeoutId);
-      }
       state.searchTimeoutId = action.payload;
     },
     clearSearchTimeout(state) {
-      if (state.searchTimeoutId) {
-        clearTimeout(state.searchTimeoutId);
-        delete state.searchTimeoutId;
-      }
+      delete state.searchTimeoutId;
     },
     cancelSearch(state) {
-      // Clear timeout
-      if (state.searchTimeoutId) {
-        clearTimeout(state.searchTimeoutId);
-        delete state.searchTimeoutId;
-      }
+      delete state.searchTimeoutId;
       // Clear active item to unblock search
       state.activeItem = null;
     }
@@ -187,6 +204,8 @@ const sendDownload = createAsyncThunk(
     { book, serverName }: { book: string; serverName: string },
     { dispatch }
   ) => {
+    clearDownloadTimer(book);
+
     // Legacy support
     dispatch(addInFlightDownload(book));
 
@@ -197,7 +216,18 @@ const sendDownload = createAsyncThunk(
     const timeoutId = window.setTimeout(() => {
       dispatch(updateDownloadStatus({ book, status: DownloadStatus.TIMEOUT }));
       dispatch(removeInFlightDownload(book));
+      dispatch(
+        addToRetryQueue({
+          book,
+          serverName,
+          status: DownloadStatus.TIMEOUT,
+          timestamp: Date.now(),
+          progress: 0,
+          retryCount: 0
+        })
+      );
     }, 60000);
+    downloadTimeouts.set(book, timeoutId);
 
     dispatch(setDownloadTimeout({ book, timeoutId }));
 
@@ -222,9 +252,26 @@ const retryDownload = createAsyncThunk(
 const cancelDownload = createAsyncThunk(
   "state/cancel_download",
   (book: string, { dispatch }) => {
+    clearDownloadTimer(book);
     dispatch(clearDownloadTimeout(book));
     dispatch(removeDownload(book));
     dispatch(removeInFlightDownload(book));
+  }
+);
+
+const clearDownloadTimeoutWithCleanup = createAsyncThunk(
+  "state/clear_download_timeout_with_cleanup",
+  (book: string, { dispatch }) => {
+    clearDownloadTimer(book);
+    dispatch(clearDownloadTimeout(book));
+  }
+);
+
+const cancelSearchWithCleanup = createAsyncThunk(
+  "state/cancel_search_with_cleanup",
+  (_: void, { dispatch }) => {
+    clearSearchTimer();
+    dispatch(cancelSearch());
   }
 );
 
@@ -233,6 +280,7 @@ const sendSearch = createAsyncThunk(
   "state/send_sendSearch",
   (queryString: string, { dispatch, getState }) => {
     // Clear any existing search timeout
+    clearSearchTimer();
     dispatch(clearSearchTimeout());
 
     // Send the books search query to the server
@@ -279,6 +327,7 @@ const sendSearch = createAsyncThunk(
         );
       }
     }, 60000);
+    searchTimeoutHandle = timeoutId;
 
     dispatch(setSearchTimeout(timeoutId));
   }
@@ -292,6 +341,7 @@ const setSearchResults = createAsyncThunk<
   "state/set_search_results",
   async ({ books, errors }: SearchResponse, { dispatch, getState }) => {
     // Clear search timeout since results arrived
+    clearSearchTimer();
     dispatch(clearSearchTimeout());
 
     const activeItem = getState().state.activeItem;
@@ -319,6 +369,7 @@ export const {
   removeInFlightDownload,
   startDownload,
   updateDownloadStatus,
+  updateDownloadProgress,
   setDownloadTimeout,
   clearDownloadTimeout,
   removeDownload,
@@ -337,6 +388,8 @@ export {
   sendDownload,
   retryDownload,
   cancelDownload,
+  clearDownloadTimeoutWithCleanup,
+  cancelSearchWithCleanup,
   sendSearch,
   setSearchResults
 };

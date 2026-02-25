@@ -2,7 +2,9 @@ import {
   Button,
   Indicator,
   Loader,
+  Progress,
   ScrollArea,
+  Stack,
   Table,
   Text,
   Tooltip
@@ -20,7 +22,7 @@ import {
   useReactTable
 } from "@tanstack/react-table";
 import { useVirtualizer } from "@tanstack/react-virtual";
-import { MagnifyingGlass, User, Warning } from "phosphor-react";
+import { MagnifyingGlass, User, Warning } from "@phosphor-icons/react";
 import { useEffect, useMemo, useRef, useState } from "react";
 import { useSelector } from "react-redux";
 import { useGetServersQuery } from "../../state/api";
@@ -59,8 +61,8 @@ export default function BookTable({ books }: BookTableProps) {
   const { data: servers } = useGetServersQuery(null);
 
   const { ref: elementSizeRef, height, width } = useElementSize();
-  const virtualizerRef = useRef();
-  const mergedRef = useMergedRef(elementSizeRef, virtualizerRef);
+  const virtualizerRef = useRef<HTMLDivElement | null>(null);
+  const mergedRef = useMergedRef<HTMLDivElement>(elementSizeRef, virtualizerRef);
 
   // Sort books: online servers first, offline last
   const sortedBooks = useMemo(() => {
@@ -211,7 +213,7 @@ export default function BookTable({ books }: BookTableProps) {
 
   return (
     <ScrollArea
-      viewportRef={mergedRef}
+      viewportRef={mergedRef as any}
       className={classes.container}
       type="hover"
       scrollbarSize={6}
@@ -322,6 +324,7 @@ function DownloadButton({
 
     switch (download.status) {
       case DownloadStatus.PENDING:
+        if (download.progress > 0) return `${Math.round(download.progress)}%`;
         if (timeElapsed < 5) return `Requesting...`;
         if (timeElapsed < 30) return `Waiting...`;
         return `Still waiting...`;
@@ -368,42 +371,48 @@ function DownloadButton({
   };
 
   return (
-    <Tooltip
-      label={
-        !serverOnline
-          ? "Server may be offline - download might not work"
-          : download?.status === DownloadStatus.TIMEOUT
-          ? "Server did not respond - click to retry"
-          : ""
-      }
-      disabled={serverOnline && !download}
-      position="left">
-      <Button
-        compact
-        size="xs"
-        radius="sm"
-        onClick={onClick}
-        disabled={isDisabled}
-        color={getButtonColor()}
-        variant={!serverOnline ? "subtle" : "filled"}
-        sx={{ fontWeight: "normal", width: 95, fontSize: "11px", touchAction: "manipulation" }}
-        aria-label={
+    <Stack spacing={4}>
+      <Tooltip
+        label={
           !serverOnline
-            ? `Download from ${serverName} (may be offline)`
+            ? "Server may be offline - download might not work"
             : download?.status === DownloadStatus.TIMEOUT
-            ? `Retry download from ${serverName}`
-            : `Download from ${serverName}`
+            ? "Server did not respond - click to retry"
+            : ""
         }
-        aria-busy={isDisabled}
-        leftIcon={
-          !serverOnline ? (
-            <Warning size={12} weight="fill" aria-hidden="true" />
-          ) : isDisabled ? (
-            <Loader size="xs" variant="dots" aria-hidden="true" />
-          ) : null
-        }>
-        {getStatusMessage()}
-      </Button>
-    </Tooltip>
+        disabled={serverOnline && !download}
+        position="left">
+        <Button
+          compact
+          size="xs"
+          radius="sm"
+          onClick={onClick}
+          disabled={isDisabled}
+          color={getButtonColor()}
+          variant={!serverOnline ? "subtle" : "filled"}
+          sx={{ fontWeight: "normal", width: 95, fontSize: "11px", touchAction: "manipulation" }}
+          aria-label={
+            !serverOnline
+              ? `Download from ${serverName} (may be offline)`
+              : download?.status === DownloadStatus.TIMEOUT
+              ? `Retry download from ${serverName}`
+              : `Download from ${serverName}`
+          }
+          aria-busy={isDisabled}
+          leftIcon={
+            !serverOnline ? (
+              <Warning size={12} weight="fill" aria-hidden="true" />
+            ) : isDisabled ? (
+              <Loader size="xs" variant="dots" aria-hidden="true" />
+            ) : null
+          }>
+          {getStatusMessage()}
+        </Button>
+      </Tooltip>
+
+      {download && download.status === DownloadStatus.PENDING && download.progress > 0 && (
+        <Progress value={download.progress} size={4} radius="xl" color="blue" />
+      )}
+    </Stack>
   );
 }

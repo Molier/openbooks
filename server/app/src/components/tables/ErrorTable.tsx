@@ -9,7 +9,7 @@ import {
   useReactTable
 } from "@tanstack/react-table";
 import { useVirtualizer } from "@tanstack/react-virtual";
-import { MagnifyingGlass, WarningCircle } from "phosphor-react";
+import { MagnifyingGlass, WarningCircle } from "@phosphor-icons/react";
 import { useEffect, useMemo, useRef } from "react";
 import { ParseError } from "../../state/messages";
 import { TextFilter } from "./Filters/TextFilter";
@@ -35,8 +35,8 @@ export default function ErrorTable({
 
   const { classes, cx, theme } = useTableStyles();
   const { ref: elementSizeRef, height, width } = useElementSize();
-  const virtualizerRef = useRef();
-  const mergedRef = useMergedRef(elementSizeRef, virtualizerRef);
+  const virtualizerRef = useRef<HTMLDivElement | null>(null);
+  const mergedRef = useMergedRef<HTMLDivElement>(elementSizeRef, virtualizerRef);
 
   const columns = useMemo(() => {
     const cols = (cols: number) => (width / 12) * cols;
@@ -106,7 +106,7 @@ export default function ErrorTable({
       </Text>
 
       <ScrollArea
-        viewportRef={mergedRef}
+        viewportRef={mergedRef as any}
         className={classes.container}
         type="hover"
         scrollbarSize={6}

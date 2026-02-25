@@ -7,16 +7,15 @@ import {
   Text,
   Tooltip
 } from "@mantine/core";
-import { Warning } from "phosphor-react";
+import { Warning } from "@phosphor-icons/react";
 import { useEffect, useState } from "react";
-import { useSelector } from "react-redux";
 import { BookDetail } from "../../state/messages";
 import {
   DownloadStatus,
   retryDownload,
   sendDownload
 } from "../../state/stateSlice";
-import { RootState, useAppDispatch } from "../../state/store";
+import { useAppDispatch, useAppSelector } from "../../state/store";
 import { formatSize } from "../../utils/bookUtils";
 
 interface SourceRowProps {
@@ -33,10 +32,10 @@ export default function SourceRow({
   const dispatch = useAppDispatch();
   const online = servers?.includes(source.server) ?? false;
 
-  const download = useSelector(
-    (state: RootState) => state.state.downloads[source.full]
+  const download = useAppSelector(
+    (state) => state.state.downloads[source.full]
   );
-  const isInFlight = useSelector((state: RootState) =>
+  const isInFlight = useAppSelector((state) =>
     state.state.inFlightDownloads.includes(source.full)
   );
 
