@@ -36,6 +36,7 @@ var cliCmd = &cobra.Command{
 		cliConfig.Log = globalFlags.Log
 		cliConfig.SearchBot = globalFlags.SearchBot
 		cliConfig.EnableTLS = globalFlags.EnableTLS
+		cliConfig.TLSSkipVerify = globalFlags.TLSSkipVerify
 
 		if debug {
 			spew.Dump(cliConfig)

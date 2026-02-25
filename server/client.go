@@ -47,6 +47,8 @@ type Client struct {
 
 	// Context is used to signal when this client should close.
 	ctx context.Context
+	// cancel signals reader/writer loops to terminate.
+	cancel context.CancelFunc
 }
 
 // readPump pumps messages from the websocket connection to the hub.
@@ -59,6 +61,13 @@ func (server *server) readPump(c *Client) {
 		c.conn.Close()
 		server.unregister <- c
 	}()
+
+	go func() {
+		<-c.ctx.Done()
+		// Force unblock of any active ReadJSON call.
+		_ = c.conn.SetReadDeadline(time.Now())
+	}()
+
 	c.conn.SetReadLimit(maxMessageSize)
 	c.conn.SetReadDeadline(time.Now().Add(pongWait))
 	c.conn.SetPongHandler(func(string) error { c.conn.SetReadDeadline(time.Now().Add(pongWait)); return nil })

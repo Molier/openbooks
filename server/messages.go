@@ -20,6 +20,7 @@ const (
 	DOWNLOAD
 	RATELIMIT
 	SERVER_LIST
+	DOWNLOAD_PROGRESS
 )
 
 type NotificationType int
@@ -76,6 +77,15 @@ type DownloadResponse struct {
 	Book         string `json:"book"`
 	Name         string `json:"name"`
 	DownloadPath string `json:"downloadPath"`
+}
+
+// DownloadProgressResponse streams server-side DCC transfer progress to clients.
+type DownloadProgressResponse struct {
+	StatusResponse
+	Book     string  `json:"book"`
+	Received int64   `json:"received"`
+	Total    int64   `json:"total"`
+	Percent  float64 `json:"percent"`
 }
 
 // ServerListResponse notifies clients that the server list has been updated
@@ -164,5 +174,27 @@ func newServerListResponse() ServerListResponse {
 			NotificationType: SUCCESS,
 			Title:            "Server list updated",
 		},
+	}
+}
+
+func newDownloadProgressResponse(book string, received, total int64) DownloadProgressResponse {
+	percent := 0.0
+	if total > 0 {
+		percent = (float64(received) / float64(total)) * 100
+		if percent > 100 {
+			percent = 100
+		}
+	}
+
+	return DownloadProgressResponse{
+		StatusResponse: StatusResponse{
+			MessageType:      DOWNLOAD_PROGRESS,
+			NotificationType: NOTIFY,
+			Title:            "Download progress",
+		},
+		Book:     book,
+		Received: received,
+		Total:    total,
+		Percent:  percent,
 	}
 }

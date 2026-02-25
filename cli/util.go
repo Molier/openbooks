@@ -27,7 +27,7 @@ func registerShutdown(conn *irc.Conn, cancel context.CancelFunc) {
 	signal.Notify(c, os.Interrupt, syscall.SIGTERM)
 	go func() {
 		<-c
-		conn.Disconnect()
+		_ = conn.Disconnect()
 		cancel()
 		os.Exit(0)
 	}()
@@ -38,7 +38,7 @@ func instantiate(config *Config) {
 	fmt.Printf("Connecting to %s.", config.Server)
 	conn := irc.New(config.UserName, config.Version)
 	config.irc = conn
-	err := core.Join(conn, config.Server, config.EnableTLS)
+	err := core.Join(conn, config.Server, config.EnableTLS, config.TLSSkipVerify)
 	if err != nil {
 		log.Fatal(err)
 	}

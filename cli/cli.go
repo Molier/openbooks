@@ -10,14 +10,15 @@ import (
 )
 
 type Config struct {
-	UserName  string // Username to use when connecting to IRC
-	Log       bool   // True if IRC messages should be logged
-	Dir       string
-	Server    string
-	EnableTLS bool
-	SearchBot string
-	Version   string
-	irc       *irc.Conn
+	UserName      string // Username to use when connecting to IRC
+	Log           bool   // True if IRC messages should be logged
+	Dir           string
+	Server        string
+	EnableTLS     bool
+	TLSSkipVerify bool
+	SearchBot     string
+	Version       string
+	irc           *irc.Conn
 }
 
 // StartInteractive instantiates the OpenBooks CLI interface
@@ -38,7 +39,11 @@ func StartInteractive(config Config) {
 		defer file.Close()
 	}
 
-	go core.StartReader(ctx, config.irc, handler)
+	go func() {
+		if err := core.StartReader(ctx, config.irc, handler); err != nil {
+			fmt.Printf("IRC reader stopped: %v\n", err)
+		}
+	}()
 	terminalMenu(config)
 
 	<-ctx.Done()
@@ -62,8 +67,16 @@ func StartDownload(config Config, download string) {
 	}
 
 	fmt.Printf("Sending download request.")
-	go core.StartReader(ctx, config.irc, handler)
-	core.DownloadBook(config.irc, download)
+	go func() {
+		if err := core.StartReader(ctx, config.irc, handler); err != nil {
+			fmt.Printf("IRC reader stopped: %v\n", err)
+		}
+	}()
+	if err := core.DownloadBook(config.irc, download); err != nil {
+		fmt.Printf("Unable to send download request: %v\n", err)
+		cancel()
+		return
+	}
 	fmt.Printf("%sSent download request.", clearLine)
 	fmt.Printf("Waiting for file response.")
 
@@ -94,8 +107,16 @@ func StartSearch(config Config, query string) {
 	warnIfServerOffline(query)
 	time.Sleep(time.Until(nextSearchTime))
 
-	go core.StartReader(ctx, config.irc, handler)
-	core.SearchBook(config.irc, config.SearchBot, query)
+	go func() {
+		if err := core.StartReader(ctx, config.irc, handler); err != nil {
+			fmt.Printf("IRC reader stopped: %v\n", err)
+		}
+	}()
+	if err := core.SearchBook(config.irc, config.SearchBot, query); err != nil {
+		fmt.Printf("Unable to send search request: %v\n", err)
+		cancel()
+		return
+	}
 
 	setLastSearchTime()
 	fmt.Printf("%sSent search request.", clearLine)

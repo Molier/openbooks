@@ -16,6 +16,7 @@ func bindGlobalServerFlags(config *server.Config) {
 	config.Server = globalFlags.Server
 	config.SearchBot = globalFlags.SearchBot
 	config.EnableTLS = globalFlags.EnableTLS
+	config.TLSSkipVerify = globalFlags.TLSSkipVerify
 	config.RandomUsername = globalFlags.RandomUsername
 
 	// Generate random username if flag is set and no username provided
@@ -54,8 +55,8 @@ var randomWords = []string{
 // generateRandomUsername creates a random username in the format "word_timestamp"
 // Example: "cosmic_1702405821" or "phoenix_987654"
 func generateRandomUsername() string {
-	rand.Seed(time.Now().UnixNano())
-	word := randomWords[rand.Intn(len(randomWords))]
+	rng := rand.New(rand.NewSource(time.Now().UnixNano()))
+	word := randomWords[rng.Intn(len(randomWords))]
 	timestamp := time.Now().Unix() % 1000000
 	return fmt.Sprintf("%s_%d", word, timestamp)
 }

@@ -8,6 +8,7 @@ import (
 	"fmt"
 	"io/fs"
 	"log"
+	"mime"
 	"net/http"
 	"net/url"
 	"os"
@@ -52,7 +53,8 @@ func (server *server) serveWs() http.HandlerFunc {
 			cookie = &http.Cookie{
 				Name:     "OpenBooks",
 				Value:    uuid.New().String(),
-				Secure:   false,
+				Path:     server.config.Basepath,
+				Secure:   r.TLS != nil,
 				HttpOnly: true,
 				Expires:  time.Now().Add(time.Hour * 24 * 7),
 				SameSite: http.SameSiteStrictMode,
@@ -61,7 +63,7 @@ func (server *server) serveWs() http.HandlerFunc {
 		}
 
 		userId, err := uuid.Parse(cookie.Value)
-		_, alreadyConnected := server.clients[userId]
+		alreadyConnected := server.isClientConnected(userId)
 
 		// If invalid UUID or the same browser tries to connect again, reject
 		if err != nil || alreadyConnected {
@@ -69,9 +71,7 @@ func (server *server) serveWs() http.HandlerFunc {
 			return
 		}
 
-		upgrader.CheckOrigin = func(req *http.Request) bool {
-			return true
-		}
+		upgrader.CheckOrigin = server.isAllowedWebsocketOrigin
 
 		conn, err := upgrader.Upgrade(w, r, w.Header())
 		if err != nil {
@@ -79,12 +79,15 @@ func (server *server) serveWs() http.HandlerFunc {
 			return
 		}
 
+		ctx, cancel := context.WithCancel(context.Background())
+
 		client := &Client{
-			conn: conn,
-			send: make(chan interface{}, 128),
-			uuid: userId,
-			log:  log.New(os.Stdout, fmt.Sprintf("CLIENT (%s): ", server.config.UserName), log.LstdFlags|log.Lmsgprefix),
-			ctx:  context.Background(),
+			conn:   conn,
+			send:   make(chan interface{}, 128),
+			uuid:   userId,
+			log:    log.New(os.Stdout, fmt.Sprintf("CLIENT (%s): ", server.config.UserName), log.LstdFlags|log.Lmsgprefix),
+			ctx:    ctx,
+			cancel: cancel,
 		}
 
 		server.log.Printf("Client connected from %s\n", conn.RemoteAddr().String())
@@ -116,9 +119,10 @@ func (server *server) statsHandler() http.HandlerFunc {
 	}
 
 	return func(w http.ResponseWriter, r *http.Request) {
-		result := make([]statsReponse, 0, len(server.clients))
+		clients := server.snapshotClients()
+		result := make([]statsReponse, 0, len(clients))
 
-		for _, client := range server.clients {
+		for _, client := range clients {
 			details := statsReponse{
 				UUID: client.uuid.String(),
 				Name: server.sharedIRC.Username,
@@ -134,7 +138,19 @@ func (server *server) statsHandler() http.HandlerFunc {
 
 func (server *server) serverListHandler() http.HandlerFunc {
 	return func(w http.ResponseWriter, r *http.Request) {
-		json.NewEncoder(w).Encode(server.repository.servers)
+		// Check if server list is stale (older than 5 minutes)
+		if server.repository.IsServerListStale() && server.ircConnected && server.sharedIRC != nil {
+			server.log.Println("Server list stale, requesting fresh user list from IRC...")
+			if err := server.sharedIRC.GetUsers("ebooks"); err != nil {
+				server.log.Printf("Error requesting server list refresh: %v\n", err)
+			}
+			// Note: Don't wait for response, it will come asynchronously via ServerList event
+			// Frontend will receive SERVER_LIST broadcast and refetch
+		}
+
+		// Return current cached data (might be stale, but will update soon)
+		servers := server.repository.GetServerList()
+		json.NewEncoder(w).Encode(servers)
 	}
 }
 
@@ -185,14 +201,29 @@ func (server *server) getAllBooksHandler() http.HandlerFunc {
 func (server *server) getBookHandler() http.HandlerFunc {
 	return func(w http.ResponseWriter, r *http.Request) {
 		_, fileName := path.Split(r.URL.Path)
+		fileName = filepath.Base(fileName)
 		bookPath := filepath.Join(server.config.DownloadDir, "books", fileName)
 
-		// Set proper headers for mobile browser compatibility
-		// Content-Type ensures browsers recognize the file type correctly
-		w.Header().Set("Content-Type", "application/epub+zip")
-		// Content-Disposition forces download with correct filename
-		// This prevents mobile browsers from adding .zip extension
-		w.Header().Set("Content-Disposition", fmt.Sprintf("attachment; filename=\"%s\"", fileName))
+		// Set Content-Type based on actual file extension
+		contentType := "application/octet-stream"
+		switch strings.ToLower(filepath.Ext(fileName)) {
+		case ".epub":
+			contentType = "application/epub+zip"
+		case ".pdf":
+			contentType = "application/pdf"
+		case ".mobi":
+			contentType = "application/x-mobipocket-ebook"
+		case ".azw3":
+			contentType = "application/x-mobi8-ebook"
+		case ".txt":
+			contentType = "text/plain"
+		case ".zip":
+			contentType = "application/zip"
+		case ".rar":
+			contentType = "application/x-rar-compressed"
+		}
+		w.Header().Set("Content-Type", contentType)
+		w.Header().Set("Content-Disposition", mime.FormatMediaType("attachment", map[string]string{"filename": fileName}))
 
 		http.ServeFile(w, r, bookPath)
 
@@ -210,13 +241,46 @@ func (server *server) deleteBooksHandler() http.HandlerFunc {
 		fileName, err := url.PathUnescape(chi.URLParam(r, "fileName"))
 		if err != nil {
 			server.log.Printf("Error unescaping path: %s\n", err)
-			w.WriteHeader(http.StatusInternalServerError)
+			w.WriteHeader(http.StatusBadRequest)
+			return
 		}
 
-		err = os.Remove(filepath.Join(server.config.DownloadDir, "books", fileName))
+		safeName := filepath.Base(fileName)
+		if safeName == "." || safeName == ".." || safeName == "" || safeName != fileName {
+			server.log.Printf("Rejected suspicious delete path: %q\n", fileName)
+			w.WriteHeader(http.StatusBadRequest)
+			return
+		}
+
+		err = os.Remove(filepath.Join(server.config.DownloadDir, "books", safeName))
 		if err != nil {
+			if errors.Is(err, os.ErrNotExist) {
+				w.WriteHeader(http.StatusNotFound)
+				return
+			}
 			server.log.Printf("Error deleting book file: %s\n", err)
 			w.WriteHeader(http.StatusInternalServerError)
+			return
 		}
 	}
+}
+
+func (server *server) isAllowedWebsocketOrigin(req *http.Request) bool {
+	origin := req.Header.Get("Origin")
+	if origin == "" {
+		return true
+	}
+
+	parsed, err := url.Parse(origin)
+	if err != nil {
+		return false
+	}
+
+	host := strings.ToLower(parsed.Host)
+	requestHost := strings.ToLower(req.Host)
+	if host == requestHost {
+		return true
+	}
+
+	return host == "127.0.0.1:5173" || host == "localhost:5173"
 }

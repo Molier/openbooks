@@ -68,9 +68,13 @@ func (c Config) matchesFoundHandler(num string) {
 }
 
 func (c Config) pingHandler(_ string) {
-	c.irc.Pong(c.Server)
+	if err := c.irc.Pong(c.Server); err != nil {
+		fmt.Printf("Unable to send PONG: %v\n", err)
+	}
 }
 
 func (c *Config) versionHandler(line string) {
-	core.SendVersionInfo(c.irc, line, c.Version)
+	if err := core.SendVersionInfo(c.irc, line, c.Version); err != nil {
+		fmt.Printf("Unable to send version response: %v\n", err)
+	}
 }

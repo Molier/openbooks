@@ -4,12 +4,17 @@ import (
 	"fmt"
 	"os"
 	"path/filepath"
+	"time"
 
 	"github.com/evan-buss/openbooks/core"
+	"github.com/evan-buss/openbooks/dcc"
 )
 
 func (server *server) NewIrcEventHandler() core.EventHandler {
 	handler := core.EventHandler{}
+	handler[core.Message] = func(_ string) {
+		server.setIrcActivityNow()
+	}
 	handler[core.SearchResult] = server.searchResultHandler(server.config.DownloadDir)
 	handler[core.BookResult] = server.bookResultHandler(server.config.DownloadDir, server.config.DisableBrowserDownloads)
 	handler[core.NoResults] = server.noResultsHandler
@@ -17,6 +22,7 @@ func (server *server) NewIrcEventHandler() core.EventHandler {
 	handler[core.SearchAccepted] = server.searchAcceptedHandler
 	handler[core.MatchesFound] = server.matchesFoundHandler
 	handler[core.Ping] = server.pingHandler
+	handler[core.Pong] = server.pongHandler
 	handler[core.ServerList] = server.userListHandler(server.repository)
 	handler[core.Version] = server.versionHandler(server.config.UserAgent)
 	return handler
@@ -24,7 +30,7 @@ func (server *server) NewIrcEventHandler() core.EventHandler {
 
 // broadcast sends a message to all connected clients
 func (server *server) broadcast(message interface{}) {
-	for _, client := range server.clients {
+	for _, client := range server.snapshotClients() {
 		select {
 		case client.send <- message:
 		default:
@@ -78,15 +84,36 @@ func (server *server) searchResultHandler(downloadDir string) core.HandlerFunc {
 // bookResultHandler downloads the book file and sends it over the websocket to all clients
 func (server *server) bookResultHandler(downloadDir string, disableBrowserDownloads bool) core.HandlerFunc {
 	return func(text string) {
-		extractedPath, err := core.DownloadExtractDCCStringWithOptions(filepath.Join(downloadDir, "books"), text, nil, server.config.AutoExtractAll)
+		requestedBook := server.peekDownloadRequest()
+		if requestedBook != "" {
+			defer server.dequeueDownloadRequest()
+		}
+
+		progressBook := requestedBook
+		var progressWriter *transferProgressWriter
+
+		if downloadMeta, err := dcc.ParseString(text); err == nil {
+			if progressBook == "" {
+				progressBook = downloadMeta.Filename
+			}
+			progressWriter = newTransferProgressWriter(downloadMeta.Size, func(received, total int64) {
+				server.broadcast(newDownloadProgressResponse(progressBook, received, total))
+			})
+		}
+
+		extractedPath, err := core.DownloadExtractDCCStringWithOptions(filepath.Join(downloadDir, "books"), text, progressWriter, server.config.AutoExtractAll)
 		if err != nil {
 			server.log.Println(err)
 			server.broadcast(newErrorResponse("Error when downloading book."))
 			return
 		}
 
+		if progressBook == "" {
+			progressBook = text
+		}
+
 		server.log.Printf("Sending book entitled '%s'.\n", filepath.Base(extractedPath))
-		server.broadcast(newDownloadResponse(text, extractedPath, disableBrowserDownloads))
+		server.broadcast(newDownloadResponse(progressBook, extractedPath, disableBrowserDownloads))
 	}
 }
 
@@ -111,21 +138,60 @@ func (server *server) matchesFoundHandler(num string) {
 }
 
 func (server *server) pingHandler(serverUrl string) {
-	server.sharedIRC.Pong(serverUrl)
+	server.setIrcActivityNow()
+	if err := server.sharedIRC.Pong(serverUrl); err != nil {
+		server.log.Printf("Error responding to IRC ping: %v\n", err)
+	}
+}
+
+func (server *server) pongHandler(_ string) {
+	server.setIrcActivityNow()
 }
 
 func (server *server) versionHandler(version string) core.HandlerFunc {
 	return func(line string) {
 		server.log.Printf("Sending CTCP version response: %s", line)
-		core.SendVersionInfo(server.sharedIRC, line, version)
+		if err := core.SendVersionInfo(server.sharedIRC, line, version); err != nil {
+			server.log.Printf("Error sending CTCP version response: %v\n", err)
+		}
 	}
 }
 
 func (server *server) userListHandler(repo *Repository) core.HandlerFunc {
 	return func(text string) {
-		repo.servers = core.ParseServers(text)
-		server.log.Printf("Server list updated: %d elevated users, %d regular users\n",
-			len(repo.servers.ElevatedUsers), len(repo.servers.RegularUsers))
+		servers := core.ParseServers(text)
+		repo.UpdateServerList(servers)
+
+		server.log.Printf("Server list updated: %d elevated, %d regular users\n",
+			len(servers.ElevatedUsers), len(servers.RegularUsers))
+
 		server.broadcast(newServerListResponse())
 	}
+}
+
+type transferProgressWriter struct {
+	total    int64
+	received int64
+	lastEmit time.Time
+	emit     func(received, total int64)
+}
+
+func newTransferProgressWriter(total int64, emit func(received, total int64)) *transferProgressWriter {
+	return &transferProgressWriter{
+		total: total,
+		emit:  emit,
+	}
+}
+
+func (w *transferProgressWriter) Write(p []byte) (int, error) {
+	n := len(p)
+	w.received += int64(n)
+
+	now := time.Now()
+	if now.Sub(w.lastEmit) >= 500*time.Millisecond || (w.total > 0 && w.received >= w.total) {
+		w.emit(w.received, w.total)
+		w.lastEmit = now
+	}
+
+	return n, nil
 }

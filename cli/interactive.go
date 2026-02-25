@@ -29,12 +29,16 @@ func terminalMenu(config Config) {
 		nextSearchTime := getLastSearchTime().Add(15 * time.Second)
 		time.Sleep(time.Until(nextSearchTime))
 
-		core.SearchBook(config.irc, config.SearchBot, clean(query))
+		if err := core.SearchBook(config.irc, config.SearchBot, clean(query)); err != nil {
+			fmt.Printf("Unable to send search request: %v\n", err)
+		}
 		setLastSearchTime()
 	case "g":
 		fmt.Print("Download String: ")
 		message, _ := reader.ReadString('\n')
-		core.DownloadBook(config.irc, clean(message))
+		if err := core.DownloadBook(config.irc, clean(message)); err != nil {
+			fmt.Printf("Unable to send download request: %v\n", err)
+		}
 		fmt.Println("\nSent download request.")
 		warnIfServerOffline(clean(message))
 	case "se":
@@ -45,7 +49,7 @@ func terminalMenu(config Config) {
 		terminalMenu(config)
 	case "d":
 		fmt.Println("Disconnecting.")
-		config.irc.Disconnect()
+		_ = config.irc.Disconnect()
 		os.Exit(0)
 	default:
 		fmt.Println("Invalid Selection.")

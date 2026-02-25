@@ -3,8 +3,9 @@ package core
 import (
 	"bufio"
 	"context"
-	"log"
+	"io"
 	"strings"
+	"time"
 
 	"github.com/evan-buss/openbooks/irc"
 )
@@ -23,6 +24,7 @@ const (
 	ServerList     = event(8)
 	Ping           = event(9)
 	Version        = event(10)
+	Pong           = event(11)
 )
 
 // Unique identifiers found in the message for various different events.
@@ -43,19 +45,37 @@ const (
 type HandlerFunc func(text string)
 type EventHandler map[event]HandlerFunc
 
-func StartReader(ctx context.Context, irc *irc.Conn, handler EventHandler) {
-	var users strings.Builder
-	scanner := bufio.NewScanner(irc)
+func StartReader(ctx context.Context, irc *irc.Conn, handler EventHandler) error {
+	conn, err := irc.RawConn()
+	if err != nil {
+		return err
+	}
 
-	for scanner.Scan() {
+	var users strings.Builder
+	scanner := bufio.NewScanner(conn)
+	for {
 		select {
 		case <-ctx.Done():
-			return
+			return nil
+		default:
+			// Reset read deadline so dead sockets fail fast and trigger reconnect.
+			if err := irc.SetReadDeadline(time.Now().Add(2 * time.Minute)); err != nil {
+				return err
+			}
+		}
+
+		if !scanner.Scan() {
+			if err := scanner.Err(); err != nil {
+				return err
+			}
+			return io.EOF
+		}
+
+		select {
+		case <-ctx.Done():
+			return nil
 		default:
 			text := scanner.Text()
-			if err := scanner.Err(); err != nil {
-				log.Println(err)
-			}
 
 			// Send raw message if they want to recieve it (logging purposes)
 			if invoke, ok := handler[Message]; ok {
@@ -90,6 +110,8 @@ func StartReader(ctx context.Context, irc *irc.Conn, handler EventHandler) {
 				users.Reset()
 			} else if strings.Contains(text, pingMessage) {
 				event = Ping
+			} else if strings.Contains(text, "PONG") {
+				event = Pong
 			} else if strings.Contains(text, versionInquiry) {
 				event = Version
 			}

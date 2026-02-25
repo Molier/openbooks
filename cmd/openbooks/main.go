@@ -26,6 +26,7 @@ type GlobalFlags struct {
 	Log            bool
 	SearchBot      string
 	EnableTLS      bool
+	TLSSkipVerify  bool
 	UserAgent      string
 	RandomUsername bool
 	AuthUser       string
@@ -42,6 +43,7 @@ func init() {
 	desktopCmd.PersistentFlags().BoolVar(&globalFlags.RandomUsername, "random-name", false, "Generate a random username instead of requiring --name flag.")
 	desktopCmd.PersistentFlags().StringVarP(&globalFlags.Server, "server", "s", "irc.irchighway.net:6697", "IRC server to connect to.")
 	desktopCmd.PersistentFlags().BoolVar(&globalFlags.EnableTLS, "tls", true, "Connect to server using TLS.")
+	desktopCmd.PersistentFlags().BoolVar(&globalFlags.TLSSkipVerify, "tls-skip-verify", true, "Skip TLS certificate verification when TLS is enabled.")
 	desktopCmd.PersistentFlags().BoolVarP(&globalFlags.Log, "log", "l", false, "Save raw IRC logs for each client connection.")
 	desktopCmd.PersistentFlags().StringVar(&globalFlags.SearchBot, "searchbot", "search", "The IRC bot that handles search queries. Try 'searchook' if 'search' is down.")
 	desktopCmd.PersistentFlags().StringVarP(&globalFlags.UserAgent, "useragent", "u", fmt.Sprintf("OpenBooks %s", ircVersion), "UserAgent / Version Reported to IRC Server.")
