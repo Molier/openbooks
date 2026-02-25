@@ -7,7 +7,6 @@ import (
 	"fmt"
 	"io"
 	"os"
-	"regexp"
 	"sort"
 	"strings"
 )
@@ -76,25 +75,7 @@ func ParseSearchFile(filePath string) ([]BookDetail, []ParseError, error) {
 }
 
 func ParseSearch(reader io.Reader) ([]BookDetail, []ParseError) {
-	var books []BookDetail
-	var parseErrors []ParseError
-
-	scanner := bufio.NewScanner(reader)
-	for scanner.Scan() {
-		line := scanner.Text()
-		if strings.HasPrefix(line, "!") {
-			dat, err := parseLine(line)
-			if err != nil {
-				parseErrors = append(parseErrors, ParseError{Line: line, Error: err})
-			} else {
-				books = append(books, dat)
-			}
-		}
-	}
-
-	sort.Slice(books, func(i, j int) bool { return books[i].Server < books[j].Server })
-
-	return books, parseErrors
+	return ParseSearchV2(reader)
 }
 
 // Parse line extracts data from a single line
@@ -183,132 +164,46 @@ func ParseSearchV2(reader io.Reader) ([]BookDetail, []ParseError) {
 }
 
 func parseLineV2(line string) (BookDetail, error) {
-	getServer := func(line string) (string, error) {
-		if line[0] != '!' {
-			return "", errors.New("result lines must start with '!'")
-		}
-
-		firstSpace := strings.Index(line, " ")
-		if firstSpace == -1 {
-			return "", errors.New("unable parse server name")
-		}
-
-		return line[1:firstSpace], nil
+	line = strings.TrimSpace(line)
+	if line == "" || line[0] != '!' {
+		return BookDetail{}, errors.New("result lines must start with '!'")
 	}
 
-	getAuthorAndSkipHash := func(line string) (string, int, error) {
-		firstSpace := strings.Index(line, " ")
-		dashChar := strings.Index(line, " - ")
-		if dashChar == -1 {
-			return "", 0, errors.New("unable to parse author")
-		}
-
-		potentialAuthor := line[firstSpace+len(" ") : dashChar]
-
-		// Handles case with weird author characters %\w% ("%F77FE9FF1CCD% Michael Haag")
-		if strings.Contains(potentialAuthor, "%") {
-			split := strings.SplitAfterN(potentialAuthor, " ", 2)
-			if len(split) > 1 {
-				return split[1], dashChar, nil
-			}
-		}
-
-		// Strategy 1: Check if this looks like a hash (no spaces, followed by another " - ")
-		// This handles formats like: !Server HASH - Author - Title
-		if !strings.Contains(potentialAuthor, " ") {
-			// Look for second dash
-			secondDash := strings.Index(line[dashChar+len(" - "):], " - ")
-			if secondDash != -1 {
-				// Extract author between first and second dash
-				actualAuthor := line[dashChar+len(" - ") : dashChar+len(" - ")+secondDash]
-				// Return author and position after second dash
-				return actualAuthor, dashChar + len(" - ") + secondDash, nil
-			}
-		}
-
-		// Strategy 2: Default format !Server Author - Title
-		return potentialAuthor, dashChar, nil
-	}
-
-	getTitle := func(line string, authorEndPos int) (string, string, int) {
-		// Start searching for the title after the author section
-		searchableLine := line[authorEndPos+len(" - "):]
-
-		// Regex to find formats like (epub), [pdf], etc.
-		re := regexp.MustCompile(`(?i)[\(\[](\w+)[\)\]]`)
-		matches := re.FindStringSubmatchIndex(searchableLine)
-
-		if len(matches) > 0 {
-			// The format is in the first capture group
-			format := strings.ToLower(searchableLine[matches[2]:matches[3]])
-			
-			// Title is everything before the match
-			title := strings.TrimSpace(searchableLine[:matches[0]])
-			
-			// Handle compressed files containing other formats
-			if format == "rar" || format == "zip" {
-				for _, ext2 := range fileTypes[:len(fileTypes)-2] {
-					if strings.Contains(strings.ToLower(title), ext2) {
-						return title, ext2, authorEndPos + len(" - ") + matches[1]
-					}
+	fullLine := line
+	size := "N/A"
+	if infoIndex := strings.Index(line, " ::INFO:: "); infoIndex != -1 {
+		fullLine = strings.TrimSpace(line[:infoIndex])
+		sizeBits := strings.Fields(strings.TrimSpace(line[infoIndex+len(" ::INFO:: "):]))
+		if len(sizeBits) > 0 {
+			size = sizeBits[0]
+			if len(sizeBits) > 1 {
+				unit := strings.TrimSpace(sizeBits[1])
+				if len(unit) <= 3 {
+					size += unit
 				}
 			}
-
-			return title, format, authorEndPos + len(" - ") + matches[1]
 		}
-
-		// Fallback for .ext style formats
-		for _, ext := range fileTypes {
-			if endTitle := strings.LastIndex(searchableLine, "."+ext); endTitle != -1 {
-				title := strings.TrimSpace(searchableLine[:endTitle])
-				return title, ext, authorEndPos + len(" - ") + endTitle
-			}
-		}
-
-		return "", "", -1
 	}
 
-	getSize := func(line string) (string, int) {
-		// Regex to find file sizes (e.g., "533.4 KB", "12.8 MB", "2.1 GB")
-		// It looks for a number (with optional decimal part) followed by KB, MB, or GB, case-insensitive.
-		re := regexp.MustCompile(`(\d+(\.\d+)?)\s*(KB|MB|GB)`)
-		matches := re.FindStringSubmatch(line)
-
-		if len(matches) > 1 {
-			// matches[0] is the full match (e.g., "533.4 KB")
-			// The position returned is the end of the size string to help parsing the rest of the line.
-			endIndex := strings.Index(line, matches[0]) + len(matches[0])
-			return matches[0], endIndex
-		}
-
-		// Fallback for formats with "::INFO::" delimiter
-		const delimiter = " ::INFO:: "
-		if infoIndex := strings.LastIndex(line, delimiter); infoIndex != -1 {
-			parts := strings.Split(line[infoIndex+len(delimiter):], " ")
-			if len(parts) > 0 {
-				return parts[0], infoIndex
-			}
-		}
-
-		return "N/A", len(line)
+	firstSpace := strings.Index(fullLine, " ")
+	if firstSpace == -1 {
+		return BookDetail{}, errors.New("unable parse server name")
 	}
-
-	server, err := getServer(line)
-	if err != nil {
-		return BookDetail{}, err
-	}
-
-	author, authorEndPos, err := getAuthorAndSkipHash(line)
-	if err != nil {
-		return BookDetail{}, err
-	}
-
-	title, format, titleIndex := getTitle(line, authorEndPos)
-	if titleIndex == -1 {
+	server := fullLine[1:firstSpace]
+	rest := strings.TrimSpace(fullLine[firstSpace+1:])
+	if rest == "" {
 		return BookDetail{}, errors.New("unable to parse title")
 	}
 
-	size, endIndex := getSize(line)
+	titlePlusMeta, format, err := splitTitleAndFormat(rest)
+	if err != nil {
+		return BookDetail{}, err
+	}
+
+	author, title := splitAuthorAndTitle(titlePlusMeta)
+	if title == "" {
+		return BookDetail{}, errors.New("unable to parse title")
+	}
 
 	return BookDetail{
 		Server: server,
@@ -316,6 +211,75 @@ func parseLineV2(line string) (BookDetail, error) {
 		Title:  title,
 		Format: format,
 		Size:   size,
-		Full:   strings.TrimSpace(line[:endIndex]),
+		Full:   fullLine,
 	}, nil
+}
+
+func splitTitleAndFormat(input string) (string, string, error) {
+	lower := strings.ToLower(input)
+	bestExt := ""
+	bestIndex := -1
+	for _, ext := range fileTypes {
+		idx := strings.LastIndex(lower, "."+ext)
+		if idx > bestIndex {
+			bestIndex = idx
+			bestExt = ext
+		}
+	}
+
+	if bestIndex == -1 {
+		return "", "", errors.New("unable to parse title")
+	}
+
+	title := strings.TrimSpace(input[:bestIndex])
+	if title == "" {
+		return "", "", errors.New("unable to parse title")
+	}
+
+	format := bestExt
+	if bestExt == "rar" || bestExt == "zip" {
+		lowerTitle := strings.ToLower(title)
+		for _, ext := range fileTypes[:len(fileTypes)-2] {
+			if strings.Contains(lowerTitle, "("+ext+")") ||
+				strings.Contains(lowerTitle, "["+ext+"]") ||
+				strings.Contains(lowerTitle, "."+ext) {
+				format = ext
+				break
+			}
+		}
+	}
+
+	return title, format, nil
+}
+
+func splitAuthorAndTitle(input string) (string, string) {
+	working := strings.TrimSpace(input)
+	if strings.HasPrefix(working, "%") {
+		if idx := strings.Index(working[1:], "%"); idx != -1 {
+			working = strings.TrimSpace(working[idx+2:])
+		}
+	}
+
+	delimiter := " - "
+	firstDash := strings.Index(working, delimiter)
+	if firstDash == -1 {
+		return "Unknown", strings.TrimSpace(working)
+	}
+
+	author := strings.TrimSpace(working[:firstDash])
+	title := strings.TrimSpace(working[firstDash+len(delimiter):])
+
+	// Handle "hash - author - title" patterns where the first token is a non-human ID.
+	if !strings.Contains(author, " ") {
+		if secondDash := strings.Index(title, delimiter); secondDash != -1 {
+			author = strings.TrimSpace(title[:secondDash])
+			title = strings.TrimSpace(title[secondDash+len(delimiter):])
+		}
+	}
+
+	if author == "" {
+		author = "Unknown"
+	}
+
+	return author, title
 }

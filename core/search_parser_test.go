@@ -11,15 +11,15 @@ func TestSearchParser(t *testing.T) {
 	reader := strings.NewReader(sampleData)
 	results, errors := ParseSearch(reader)
 
-	if len(errors) > 1 {
-		t.Errorf("Expected 1 errors but got %d\n", len(errors))
+	if len(errors) != 0 {
+		t.Errorf("Expected 0 errors but got %d\n", len(errors))
 		for _, parseError := range errors {
 			t.Log(parseError)
 		}
 	}
 
-	if len(results) != 57 {
-		t.Errorf("Expected 57 results but got %d\n", len(results))
+	if len(results) != 59 {
+		t.Errorf("Expected 59 results but got %d\n", len(results))
 	}
 }
 
@@ -27,15 +27,15 @@ func TestSearchParserV2(t *testing.T) {
 	reader := strings.NewReader(sampleData)
 	results, errors := ParseSearchV2(reader)
 
-	if len(errors) != 1 {
-		t.Errorf("Expected 1 errors but got %d\n", len(errors))
+	if len(errors) != 0 {
+		t.Errorf("Expected 0 errors but got %d\n", len(errors))
 		for _, parseError := range errors {
 			t.Log(parseError)
 		}
 	}
 
-	if len(results) != 57 {
-		t.Errorf("Expected 57 results but got %d\n", len(results))
+	if len(results) != 59 {
+		t.Errorf("Expected 59 results but got %d\n", len(results))
 	}
 }
 
