@@ -1,12 +1,14 @@
 package util
 
 import (
+	"encoding/binary"
 	"errors"
 	"fmt"
 	"io"
 	"log"
 	"os"
 	"path/filepath"
+	"strings"
 
 	"github.com/mholt/archiver/v3"
 )
@@ -16,10 +18,8 @@ var (
 )
 
 func ExtractArchive(archivePath string) (string, error) {
-	// Our path will have a .temp appended to it so we can't rely on the automatic file-extension based archive extractor selection.
-	// This code was taken from the archiver.Walk(archive string, walkFn WalkFunc) error function.
-	// We just remove .temp before trying to find a matching archive extractor.
-	wIface, err := archiver.ByExtension(archivePath[:len(archivePath)-len(".temp")])
+	extractPath := resolveArchivePath(archivePath)
+	wIface, err := archiver.ByExtension(extractPath)
 	if err != nil {
 		return "", err
 	}
@@ -30,8 +30,6 @@ func ExtractArchive(archivePath string) (string, error) {
 
 	var newPath string
 	err = w.Walk(archivePath, func(f archiver.File) error {
-		// Extract only one file per archive. Otherwise, stop walking,
-		// remove extracted items, and deliver the archive itself.
 		if newPath != "" {
 			err := os.Remove(newPath)
 			if err != nil {
@@ -41,7 +39,7 @@ func ExtractArchive(archivePath string) (string, error) {
 			return archiver.ErrStopWalk
 		}
 
-		newPath = filepath.Join(filepath.Dir(archivePath), f.Name()+".temp")
+		newPath = filepath.Join(filepath.Dir(archivePath), filepath.Base(f.Name())+".temp")
 
 		out, err := os.Create(newPath)
 		if err != nil {
@@ -68,8 +66,6 @@ func ExtractArchive(archivePath string) (string, error) {
 		return "", err
 	}
 
-	// If we extracted exactly one file, send that file and remove the zip file.
-	// Otherwise, send the archive itself.
 	if newPath != "" {
 		err := os.Remove(archivePath)
 		if err != nil {
@@ -81,10 +77,11 @@ func ExtractArchive(archivePath string) (string, error) {
 	}
 }
 
-// ExtractAllFiles extracts all files from an archive to the same directory
-// Returns the path to the first extracted file, or the archive itself if no files were extracted
+// ExtractAllFiles extracts all files from an archive to the same directory.
+// Prioritizes returning ebook files (.epub, .mobi, .pdf, .azw3) over other formats.
 func ExtractAllFiles(archivePath string) (string, error) {
-	wIface, err := archiver.ByExtension(archivePath[:len(archivePath)-len(".temp")])
+	extractPath := resolveArchivePath(archivePath)
+	wIface, err := archiver.ByExtension(extractPath)
 	if err != nil {
 		return "", err
 	}
@@ -94,15 +91,15 @@ func ExtractAllFiles(archivePath string) (string, error) {
 	}
 
 	var firstPath string
+	var bestPath string
 	fileCount := 0
 
 	err = w.Walk(archivePath, func(f archiver.File) error {
-		// Skip directories
 		if f.IsDir() {
 			return nil
 		}
 
-		newPath := filepath.Join(filepath.Dir(archivePath), f.Name()+".temp")
+		newPath := filepath.Join(filepath.Dir(archivePath), filepath.Base(f.Name())+".temp")
 
 		out, err := os.Create(newPath)
 		if err != nil {
@@ -127,6 +124,10 @@ func ExtractAllFiles(archivePath string) (string, error) {
 		if firstPath == "" {
 			firstPath = newPath
 		}
+		ext := strings.ToLower(filepath.Ext(f.Name()))
+		if bestPath == "" && (ext == ".epub" || ext == ".mobi" || ext == ".pdf" || ext == ".azw3") {
+			bestPath = newPath
+		}
 		fileCount++
 
 		return nil
@@ -136,32 +137,129 @@ func ExtractAllFiles(archivePath string) (string, error) {
 		return "", err
 	}
 
-	// If we extracted at least one file, remove the archive and return the first file
 	if fileCount > 0 {
 		err := os.Remove(archivePath)
 		if err != nil {
 			log.Println("remove error", err)
 		}
-		log.Printf("Extracted %d files from archive, returning: %s\n", fileCount, firstPath)
-		return firstPath, nil
+		resultPath := firstPath
+		if bestPath != "" {
+			resultPath = bestPath
+		}
+		log.Printf("Extracted %d files from archive, returning: %s\n", fileCount, resultPath)
+		return resultPath, nil
 	}
 
-	// No files extracted, return the archive itself
 	return archivePath, nil
 }
 
-// IsArchive returns true if the file at the given path is an archive that can
-// be extracted. Returns false otherwise.
-func IsArchive(path string) bool {
+// DetectArchive checks if a file is an archive that should be extracted.
+// It checks both file extension AND magic bytes (for misnamed files from IRC).
+// If the file is detected as an archive by magic bytes but has a wrong extension,
+// it renames the file to have the correct extension and returns the new path.
+// Returns (newPath, true) if archive, (originalPath, false) if not.
+func DetectArchive(path string) (string, bool) {
+	cleanPath := path
 	if filepath.Ext(path) == ".temp" {
-		path = path[:len(path)-len(".temp")]
+		cleanPath = path[:len(path)-len(".temp")]
 	}
 
-	_, err := archiver.ByExtension(path)
+	// First check by file extension
+	_, err := archiver.ByExtension(cleanPath)
+	if err == nil {
+		log.Printf("Archive detected (by extension) for %s\n", cleanPath)
+		return path, true
+	}
+
+	// Extension didn't match - check magic bytes for misnamed archives
+	detectedExt := detectArchiveByContent(path)
+	if detectedExt != "" {
+		// Rename the file so archiver can detect format
+		newPath := renameForExtraction(path, detectedExt)
+		log.Printf("Archive detected (by magic bytes: %s) for %s -> %s\n", detectedExt, cleanPath, newPath)
+		return newPath, true
+	}
+
+	log.Printf("Not an archive: %s\n", cleanPath)
+	return path, false
+}
+
+// detectArchiveByContent reads the first bytes of a file to determine if it's
+// an archive. Valid EPUB files (ZIPs with mimetype entry) are NOT detected as
+// archives since they should be served as-is.
+func detectArchiveByContent(filePath string) string {
+	f, err := os.Open(filePath)
 	if err != nil {
-		log.Printf("IsArchive check failed for %s: %v\n", path, err)
+		return ""
+	}
+	defer f.Close()
+
+	header := make([]byte, 262)
+	n, err := f.Read(header)
+	if err != nil || n < 4 {
+		return ""
+	}
+
+	// RAR: "Rar!"
+	if header[0] == 0x52 && header[1] == 0x61 && header[2] == 0x72 && header[3] == 0x21 {
+		return ".rar"
+	}
+
+	// 7z
+	if n >= 6 && header[0] == 0x37 && header[1] == 0x7A && header[2] == 0xBC && header[3] == 0xAF && header[4] == 0x27 && header[5] == 0x1C {
+		return ".7z"
+	}
+
+	// ZIP: "PK\x03\x04" - but check if it's actually a valid EPUB first
+	if header[0] == 0x50 && header[1] == 0x4B && header[2] == 0x03 && header[3] == 0x04 {
+		if isValidEPUB(header, n) {
+			return "" // Valid EPUB, don't treat as archive
+		}
+		return ".zip" // ZIP wrapper, extract it
+	}
+
+	return ""
+}
+
+// isValidEPUB checks ZIP header bytes for EPUB mimetype entry.
+func isValidEPUB(header []byte, n int) bool {
+	if n < 38 {
 		return false
 	}
-	log.Printf("IsArchive check succeeded for %s\n", path)
-	return true
+	// ZIP local file header: filename length at offset 26 (2 bytes LE)
+	fnLen := int(binary.LittleEndian.Uint16(header[26:28]))
+	if fnLen != 8 || n < 30+fnLen {
+		return false
+	}
+	if string(header[30:30+fnLen]) != "mimetype" {
+		return false
+	}
+	// Check content is "application/epub+zip"
+	extraLen := int(binary.LittleEndian.Uint16(header[28:30]))
+	contentStart := 30 + fnLen + extraLen
+	epubMime := "application/epub+zip"
+	if n >= contentStart+len(epubMime) {
+		return string(header[contentStart:contentStart+len(epubMime)]) == epubMime
+	}
+	return false
+}
+
+// renameForExtraction renames a .temp file to include the correct archive extension.
+func renameForExtraction(filePath string, ext string) string {
+	if filepath.Ext(filePath) != ".temp" {
+		return filePath
+	}
+	base := filePath[:len(filePath)-len(".temp")]
+	newPath := base + ext + ".temp"
+	err := os.Rename(filePath, newPath)
+	if err != nil {
+		log.Printf("Failed to rename %s to %s: %v\n", filePath, newPath, err)
+		return filePath
+	}
+	log.Printf("Renamed misnamed archive: %s -> %s\n", filePath, newPath)
+	return newPath
+}
+
+func resolveArchivePath(archivePath string) string {
+	return archivePath[:len(archivePath)-len(".temp")]
 }

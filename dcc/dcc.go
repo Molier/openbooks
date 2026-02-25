@@ -1,12 +1,15 @@
 package dcc
 
 import (
+	"context"
 	"encoding/binary"
 	"errors"
+	"fmt"
 	"io"
 	"net"
 	"regexp"
 	"strconv"
+	"time"
 )
 
 // There are two types of DCC strings this program accepts.
@@ -16,6 +19,11 @@ var (
 	ErrInvalidDCCString = errors.New("invalid dcc send string")
 	ErrInvalidIP        = errors.New("unable to convert int IP to string")
 	ErrMissingBytes     = errors.New("download size didn't match dcc file size. data could be missing")
+)
+
+const (
+	dialTimeout = 20 * time.Second
+	readTimeout = 45 * time.Second
 )
 
 var dccRegex = regexp.MustCompile(`DCC SEND "?(.+[^"])"?\s(\d+)\s+(\d+)\s+(\d+)\s*`)
@@ -53,10 +61,14 @@ func ParseString(text string) (*Download, error) {
 	}, nil
 }
 
-// Download writes the data contained in the DCC Download
-func (download Download) Download(writer io.Writer) error {
-	// TODO: Maybe specify deadline?
-	conn, err := net.Dial("tcp", download.IP+":"+download.Port)
+// Download writes the data contained in the DCC Download.
+func (download Download) Download(ctx context.Context, writer io.Writer) error {
+	if ctx == nil {
+		ctx = context.Background()
+	}
+
+	dialer := &net.Dialer{Timeout: dialTimeout, KeepAlive: 30 * time.Second}
+	conn, err := dialer.DialContext(ctx, "tcp", download.IP+":"+download.Port)
 	if err != nil {
 		return err
 	}
@@ -72,22 +84,50 @@ func (download Download) Download(writer io.Writer) error {
 	// Copy - 2m35s
 	// Custom - 1024 - 35s
 	// Custom - 4096 - 46s, 14s
-	received := 0
+	received := int64(0)
 	bytes := make([]byte, 4096)
-	for int64(received) < download.Size {
-		n, err := conn.Read(bytes)
-		if err != nil {
+	for received < download.Size {
+		select {
+		case <-ctx.Done():
+			return ctx.Err()
+		default:
+		}
+
+		if err := conn.SetReadDeadline(time.Now().Add(readTimeout)); err != nil {
 			return err
 		}
 
-		_, err = writer.Write(bytes[:n])
-		if err != nil {
-			return err
+		n, readErr := conn.Read(bytes)
+
+		// Write any data we received, even if there was also an error (e.g., io.EOF)
+		if n > 0 {
+			// Don't write more than the expected remaining bytes
+			toWrite := int64(n)
+			if received+toWrite > download.Size {
+				toWrite = download.Size - received
+			}
+			_, writeErr := writer.Write(bytes[:toWrite])
+			if writeErr != nil {
+				return writeErr
+			}
+			received += toWrite
 		}
-		received += n
+
+		if readErr != nil {
+			if errors.Is(readErr, io.EOF) {
+				break // Connection closed, check if we got everything
+			}
+
+			var netErr net.Error
+			if errors.As(readErr, &netErr) && netErr.Timeout() {
+				return fmt.Errorf("dcc read timeout after %s", readTimeout)
+			}
+
+			return readErr
+		}
 	}
 
-	if int64(received) != download.Size {
+	if received != download.Size {
 		return ErrMissingBytes
 	}
 

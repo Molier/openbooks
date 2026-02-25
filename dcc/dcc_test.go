@@ -2,11 +2,12 @@ package dcc
 
 import (
 	"bytes"
-	"github.com/stretchr/testify/assert"
-	"github.com/stretchr/testify/require"
+	"context"
 	"testing"
 
 	"github.com/evan-buss/openbooks/mock"
+	"github.com/stretchr/testify/assert"
+	"github.com/stretchr/testify/require"
 )
 
 // TestStringParsing makes sure that data is properly extracted from the DCC
@@ -60,7 +61,7 @@ func TestDownload(t *testing.T) {
 	t.Log("After server start")
 
 	received := new(mock.WriteCloser)
-	err := textDownload.Download(received)
+	err := textDownload.Download(context.Background(), received)
 	require.NoError(t, err)
 	assert.Equal(t, text, string(received.Data))
 }

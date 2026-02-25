@@ -1,9 +1,11 @@
 package core
 
 import (
+	"context"
 	"io"
 	"os"
 	"path/filepath"
+	"time"
 
 	"github.com/evan-buss/openbooks/dcc"
 	"github.com/evan-buss/openbooks/util"
@@ -32,20 +34,28 @@ func DownloadExtractDCCStringWithOptions(baseDir, dccStr string, progress io.Wri
 	}
 
 	// Download DCC data to the file
-	err = download.Download(writer)
+	ctx, cancel := context.WithTimeout(context.Background(), 20*time.Minute)
+	defer cancel()
+	err = download.Download(ctx, writer)
 	if err != nil {
+		file.Close()
 		return "", err
 	}
 	file.Close()
-	if !util.IsArchive(dccPath) {
+
+	// DetectArchive checks both extension AND magic bytes.
+	// If the file is a misnamed archive (e.g., RAR with .epub extension),
+	// it renames the file to have the correct extension and returns the new path.
+	archivePath, isArchive := util.DetectArchive(dccPath)
+	if !isArchive {
 		return renameTempFile(dccPath), nil
 	}
 
 	var extractedPath string
 	if extractAll {
-		extractedPath, err = util.ExtractAllFiles(dccPath)
+		extractedPath, err = util.ExtractAllFiles(archivePath)
 	} else {
-		extractedPath, err = util.ExtractArchive(dccPath)
+		extractedPath, err = util.ExtractArchive(archivePath)
 	}
 	if err != nil {
 		return "", err
