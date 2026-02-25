@@ -1,7 +1,13 @@
 **/node_modules/
 **/build/
 **/dist/
-**/github/
+**/.github/
+**/.git/
+**/.gitignore
+books/
+**/books/
 openbooks.exe
 openbooks
 *.exe
+*.log
+*.tmp

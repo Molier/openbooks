@@ -1,35 +1,31 @@
-# Multi-stage build for OpenBooks (Improved Version)
-# Stage 1: Build the React frontend
-FROM node:18-alpine as web
-WORKDIR /web
-COPY . .
-WORKDIR /web/server/app/
-RUN npm install
+# Stage 1: build the frontend with cache-friendly layers.
+FROM node:20-alpine3.21 AS web
+WORKDIR /web/server/app
+COPY server/app/package*.json ./
+RUN npm ci
+COPY server/app/ ./
 RUN npm run build
 
-# Stage 2: Build the Go backend
-FROM golang:1.21-alpine as build
-WORKDIR /go/src/
-COPY . .
-COPY --from=web /web/ .
-
-# Install build dependencies
+# Stage 2: build the Go backend.
+FROM golang:1.22-alpine3.21 AS build
+WORKDIR /src
 RUN apk add --no-cache git
 
+COPY go.mod go.sum ./
+RUN go mod download
+
+COPY . .
+COPY --from=web /web/server/app/dist ./server/app/dist
+
 ENV CGO_ENABLED=0
-RUN go get -d -v ./...
-RUN go install -v ./...
-WORKDIR /go/src/cmd/openbooks/
-RUN go build
+RUN go build -o /out/openbooks ./cmd/openbooks
 
-# Stage 3: Create minimal runtime image
-FROM alpine:latest as app
+# Stage 3: runtime image.
+FROM alpine:3.21 AS app
 WORKDIR /app
-
-# Install ca-certificates for HTTPS and timezone data
 RUN apk --no-cache add ca-certificates tzdata
 
-COPY --from=build /go/src/cmd/openbooks/openbooks .
+COPY --from=build /out/openbooks ./openbooks
 
 EXPOSE 80
 VOLUME [ "/books" ]
@@ -38,7 +34,6 @@ VOLUME [ "/books" ]
 ENV AUTH_USER=""
 ENV AUTH_PASS=""
 ENV BASE_PATH=/
+ENV OPENBOOKS_ARGS="--random-name --server irc.irchighway.net:6667 --tls=false --log server --dir /books --port 80 --persist --auto-extract"
 
-# Use recommended IRC Highway configuration (port 6667, no TLS)
-# with all improvements enabled (random-name, auto-extract, persist)
-ENTRYPOINT ["./openbooks", "--random-name", "--server", "irc.irchighway.net:6667", "--tls=false", "server", "--dir", "/books", "--port", "80", "--persist", "--auto-extract"]
+ENTRYPOINT ["sh", "-c", "./openbooks ${OPENBOOKS_ARGS}"]
