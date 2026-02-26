@@ -104,6 +104,7 @@ func StartReader(ctx context.Context, irc *irc.Conn, handler EventHandler) error
 				}
 			} else if strings.Contains(text, beginUserList) {
 				users.WriteString(text)
+				users.WriteString("\n")
 			} else if strings.Contains(text, endUserList) {
 				event = ServerList
 				text = users.String()

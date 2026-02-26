@@ -9,6 +9,7 @@ import (
 	"os"
 	"os/signal"
 	"path/filepath"
+	"strings"
 	"sync"
 	"syscall"
 	"time"
@@ -27,7 +28,7 @@ type server struct {
 	// Shared data
 	repository *Repository
 	// Tracks download requests in order so async DCC responses can map back to UI items.
-	downloadQueue []string
+	downloadQueue []downloadRequest
 	downloadMutex sync.Mutex
 
 	// Registered clients.
@@ -75,6 +76,11 @@ type server struct {
 	shutdownOnce sync.Once
 }
 
+type downloadRequest struct {
+	book   string
+	server string
+}
+
 // Config contains settings for server
 type Config struct {
 	Log                     bool
@@ -101,7 +107,7 @@ func New(config Config) *server {
 	return &server{
 		repository:      NewRepository(),
 		config:          &config,
-		downloadQueue:   make([]string, 0),
+		downloadQueue:   make([]downloadRequest, 0),
 		register:        make(chan *Client),
 		unregister:      make(chan *Client),
 		clients:         make(map[uuid.UUID]*Client),
@@ -268,28 +274,39 @@ func (server *server) closeIRCLogFile() {
 
 func (server *server) enqueueDownloadRequest(book string) {
 	server.downloadMutex.Lock()
-	server.downloadQueue = append(server.downloadQueue, book)
+	server.downloadQueue = append(server.downloadQueue, downloadRequest{
+		book:   book,
+		server: extractServerFromDownloadRequest(book),
+	})
 	server.downloadMutex.Unlock()
 }
 
-func (server *server) peekDownloadRequest() string {
-	server.downloadMutex.Lock()
-	defer server.downloadMutex.Unlock()
-	if len(server.downloadQueue) == 0 {
-		return ""
-	}
-	return server.downloadQueue[0]
-}
+// claimDownloadRequestForResponse matches a received DCC response to a pending
+// download request. It prefers matching by IRC sender and falls back to FIFO.
+func (server *server) claimDownloadRequestForResponse(rawLine string) string {
+	sender := extractSenderFromIRCLine(rawLine)
 
-func (server *server) dequeueDownloadRequest() string {
 	server.downloadMutex.Lock()
 	defer server.downloadMutex.Unlock()
+
 	if len(server.downloadQueue) == 0 {
 		return ""
 	}
-	item := server.downloadQueue[0]
-	server.downloadQueue = server.downloadQueue[1:]
-	return item
+
+	matchIdx := 0
+	if sender != "" {
+		for i, request := range server.downloadQueue {
+			if request.server == sender {
+				matchIdx = i
+				break
+			}
+		}
+	}
+
+	request := server.downloadQueue[matchIdx]
+	server.downloadQueue = append(server.downloadQueue[:matchIdx], server.downloadQueue[matchIdx+1:]...)
+
+	return request.book
 }
 
 func (server *server) setIrcActivityNow() {
@@ -309,4 +326,41 @@ func createBooksDirectory(config Config) {
 	if err != nil {
 		panic(err)
 	}
+}
+
+func extractServerFromDownloadRequest(book string) string {
+	fields := strings.Fields(strings.TrimSpace(book))
+	if len(fields) == 0 {
+		return ""
+	}
+	return normalizeServerName(strings.TrimPrefix(fields[0], "!"))
+}
+
+func extractSenderFromIRCLine(line string) string {
+	trimmed := strings.TrimSpace(line)
+	if !strings.HasPrefix(trimmed, ":") {
+		return ""
+	}
+
+	trimmed = trimmed[1:]
+	if trimmed == "" {
+		return ""
+	}
+
+	end := strings.IndexAny(trimmed, "! ")
+	if end == -1 {
+		return normalizeServerName(trimmed)
+	}
+
+	return normalizeServerName(trimmed[:end])
+}
+
+func normalizeServerName(name string) string {
+	trimmed := strings.TrimSpace(name)
+	if trimmed == "" {
+		return ""
+	}
+	trimmed = strings.TrimPrefix(trimmed, ":")
+	trimmed = strings.TrimLeft(trimmed, "~&@%+!")
+	return strings.ToLower(trimmed)
 }

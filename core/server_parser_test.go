@@ -36,3 +36,22 @@ func TestCaseInsensitiveSort(t *testing.T) {
 		}
 	}
 }
+
+func TestParseServersFromRawUserListLines(t *testing.T) {
+	input := `:irc.example.net 353 TestNick = #ebooks :@Search +BSK normalUser
+:irc.example.net 353 TestNick = #ebooks :+BSK +AnotherBot
+:irc.example.net 366 TestNick #ebooks :End of /NAMES list.`
+
+	result := ParseServers(input)
+
+	wantElevated := []string{"AnotherBot", "BSK", "Search"}
+	wantRegular := []string{"normalUser"}
+
+	if !reflect.DeepEqual(result.ElevatedUsers, wantElevated) {
+		t.Errorf("got %#v, want %#v", result.ElevatedUsers, wantElevated)
+	}
+
+	if !reflect.DeepEqual(result.RegularUsers, wantRegular) {
+		t.Errorf("got %#v, want %#v", result.RegularUsers, wantRegular)
+	}
+}

@@ -84,10 +84,7 @@ func (server *server) searchResultHandler(downloadDir string) core.HandlerFunc {
 // bookResultHandler downloads the book file and sends it over the websocket to all clients
 func (server *server) bookResultHandler(downloadDir string, disableBrowserDownloads bool) core.HandlerFunc {
 	return func(text string) {
-		requestedBook := server.peekDownloadRequest()
-		if requestedBook != "" {
-			defer server.dequeueDownloadRequest()
-		}
+		requestedBook := server.claimDownloadRequestForResponse(text)
 
 		progressBook := requestedBook
 		var progressWriter *transferProgressWriter
