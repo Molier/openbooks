@@ -11,16 +11,10 @@ import { NotificationsProvider } from "@mantine/notifications";
 import NotificationDrawer from "./components/drawer/NotificationDrawer";
 import Sidebar from "./components/sidebar/Sidebar";
 import SearchPage from "./pages/SearchPage";
-import { useAppDispatch, useAppSelector } from "./state/store";
 
 const emotionCache = createEmotionCache({ key: "openbooks" });
 
 const useStyles = createStyles(() => ({
-  burger: {
-    position: "absolute",
-    bottom: 0,
-    left: 0
-  },
   wrapper: {
     boxSizing: "border-box",
     display: "flex",
@@ -39,9 +33,6 @@ export default function App() {
     defaultValue: "light" as ColorScheme,
     getInitialValueInEffect: true
   });
-
-  const dispatch = useAppDispatch();
-  const open = useAppSelector((state) => state.state.isSidebarOpen);
 
   return (
     <ColorSchemeProvider
@@ -81,7 +72,7 @@ export default function App() {
             }
           }
         }}>
-        <NotificationsProvider position="top-center">
+        <NotificationsProvider position="bottom-center">
           <AppShell
             navbar={<Sidebar />}
             padding={0}

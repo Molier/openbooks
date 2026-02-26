@@ -79,9 +79,22 @@ export default function NotificationDrawer() {
         <Stack
           spacing="xs"
           style={{ overflow: "scroll", height: "calc(100% - 44px)" }}>
+          <Text size="xs" color="dimmed">
+            Swipe a card left or right to dismiss.
+          </Text>
           <AnimatePresence mode="popLayout">
             {notifications.map((notif: AppNotification) => (
-              <motion.div {...defaultAnimation} key={notif.timestamp}>
+              <motion.div
+                {...defaultAnimation}
+                key={notif.timestamp}
+                drag="x"
+                dragConstraints={{ left: 0, right: 0 }}
+                dragElastic={0.2}
+                onDragEnd={(_, info) => {
+                  if (Math.abs(info.offset.x) > 90) {
+                    dispatch(dismissNotification(notif));
+                  }
+                }}>
                 <Tooltip
                   position="left"
                   label={new Date(notif.timestamp).toLocaleTimeString("en-US", {

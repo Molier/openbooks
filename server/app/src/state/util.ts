@@ -30,34 +30,42 @@ export const displayNotification = ({
   title,
   detail
 }: Notification) => {
+  // Keep mobile UI unobstructed: notifications are available in the drawer.
+  if (window.matchMedia("(max-width: 768px)").matches) {
+    return;
+  }
+
+  const common = {
+    title,
+    message: detail,
+    autoClose: 3000,
+    disallowClose: true
+  };
+
   switch (appearance) {
     case NotificationType.NOTIFY:
       showNotification({
+        ...common,
         color: "brand",
-        title: title,
-        message: detail
       });
       break;
     case NotificationType.SUCCESS:
       showNotification({
+        ...common,
         color: "green",
-        title: title,
-        message: detail
       });
 
       break;
     case NotificationType.WARNING:
       showNotification({
+        ...common,
         color: "yellow",
-        title: title,
-        message: detail
       });
       break;
     case NotificationType.DANGER:
       showNotification({
+        ...common,
         color: "red",
-        title: title,
-        message: detail
       });
       break;
   }
@@ -75,4 +83,15 @@ export function downloadFile(relativeURL?: string) {
   link.href = url.href;
   link.click();
   link.remove();
+}
+
+export function downloadTextFile(fileName: string, content: string) {
+  const blob = new Blob([content], { type: "text/plain;charset=utf-8" });
+  const href = URL.createObjectURL(blob);
+  const link = document.createElement("a");
+  link.href = href;
+  link.download = fileName;
+  link.click();
+  link.remove();
+  URL.revokeObjectURL(href);
 }
