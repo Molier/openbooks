@@ -17,7 +17,11 @@ interface HistoryState {
 
 const loadState = (): HistoryItem[] => {
   try {
-    return JSON.parse(localStorage.getItem("history")!) ?? [];
+    const parsed = JSON.parse(localStorage.getItem("history")!) ?? [];
+    if (!Array.isArray(parsed)) return [];
+    return parsed
+      .filter((item) => typeof item?.timestamp === "number")
+      .sort((a, b) => b.timestamp - a.timestamp);
   } catch (err) {
     return [];
   }
@@ -38,14 +42,14 @@ export const historySlice = createSlice({
       state.items = state.items.filter((x) => x.timestamp !== action.payload);
     },
     updateHistoryItem: (state, action: PayloadAction<HistoryItem>) => {
-      var pendingItemIndex = state.items.findIndex(
+      const pendingItemIndex = state.items.findIndex(
         (x) => x.timestamp === action.payload.timestamp
       );
-      state.items = [
-        ...state.items.slice(0, pendingItemIndex),
-        action.payload,
-        ...state.items.slice(pendingItemIndex + 1)
-      ];
+      if (pendingItemIndex === -1) {
+        state.items = [action.payload, ...state.items].slice(0, 16);
+        return;
+      }
+      state.items[pendingItemIndex] = action.payload;
     }
   }
 });
@@ -75,7 +79,8 @@ const deleteHistoryItem = createAsyncThunk<
 
 const { addHistoryItem, updateHistoryItem } = historySlice.actions;
 
-const selectHistory = (state: RootState) => state.history.items;
+const selectHistory = (state: RootState) =>
+  [...state.history.items].sort((a, b) => b.timestamp - a.timestamp);
 
 export type { HistoryItem };
 export { deleteHistoryItem, addHistoryItem, updateHistoryItem, selectHistory };

@@ -68,7 +68,7 @@ export default function NotificationDrawer() {
       withCloseButton={false}
       position="right"
       padding="sm"
-      size={350}>
+      size="min(92vw, 350px)">
       {notifications.length === 0 ? (
         <Center>
           <Text size="sm" color="dimmed">

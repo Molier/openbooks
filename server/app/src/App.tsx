@@ -21,8 +21,10 @@ const useStyles = createStyles(() => ({
     flexWrap: "nowrap",
     height: "100vh",
     maxHeight: "100vh",
-    width: "100vw",
-    overflow: "hidden"
+    width: "100%",
+    minWidth: 0,
+    overflowX: "hidden",
+    overflowY: "hidden"
   }
 }));
 
@@ -81,7 +83,9 @@ export default function App() {
                 backgroundColor:
                   theme.colorScheme === "dark"
                     ? theme.colors.dark[8]
-                    : theme.colors.gray[0]
+                    : theme.colors.gray[0],
+                minWidth: 0,
+                overflow: "hidden"
               }
             })}>
             <div className={classes.wrapper}>

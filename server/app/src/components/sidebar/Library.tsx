@@ -10,6 +10,7 @@ import {
 } from "@mantine/core";
 import { AnimatePresence, motion } from "framer-motion";
 import { Book as BookIcon, Download, Trash } from "@phosphor-icons/react";
+import { useMemo } from "react";
 import { Book, useDeleteBookMutation, useGetBooksQuery } from "../../state/api";
 import { downloadFile } from "../../state/util";
 import { defaultAnimation } from "../../utils/animation";
@@ -17,6 +18,13 @@ import { useSidebarButtonStyle } from "./styles";
 
 export default function Library() {
   const { data, isLoading, isSuccess, isError } = useGetBooksQuery(null);
+  const sortedBooks = useMemo(
+    () =>
+      [...(data ?? [])].sort(
+        (a, b) => new Date(b.time).getTime() - new Date(a.time).getTime()
+      ),
+    [data]
+  );
 
   if (isLoading) {
     return (
@@ -49,7 +57,7 @@ export default function Library() {
   return (
     <Stack spacing="xs">
       <AnimatePresence mode="popLayout">
-        {data?.map((book) => (
+        {sortedBooks.map((book) => (
           <motion.div {...defaultAnimation} key={book.name}>
             <LibraryCard key={book.name} book={book} />
           </motion.div>

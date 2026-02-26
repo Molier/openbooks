@@ -48,6 +48,8 @@ const useStyles = createStyles((theme) => ({
     display: "flex",
     justifyContent: "space-between",
     alignItems: "center",
+    flexWrap: "wrap",
+    gap: theme.spacing.xs,
     padding: `${theme.spacing.sm}px ${theme.spacing.md}px`,
     marginBottom: theme.spacing.md,
     backgroundColor:
@@ -65,6 +67,14 @@ const useStyles = createStyles((theme) => ({
   flowCard: {
     width: "100%",
     marginBottom: 12
+  },
+  searchGroup: {
+    marginBottom: theme.spacing.md,
+    alignItems: "stretch",
+    flexWrap: "nowrap",
+    [`@media (max-width: 900px)`]: {
+      flexWrap: "wrap"
+    }
   },
   sidebarPulse: {
     animation: "sidebarPulse 2.8s ease-in-out infinite"
@@ -121,8 +131,10 @@ export default function SearchPage() {
 
   const hasErrors = (activeItem?.errors ?? []).length > 0;
   const errorCount = activeItem?.errors?.length ?? 0;
-  const validInput = searchQuery !== "";
+  const trimmedQuery = searchQuery.trim();
+  const validInput = trimmedQuery !== "";
   const isSearching = activeItem?.results === null;
+  const hasLoadedResults = Array.isArray(activeItem?.results);
   const downloadList = useMemo(() => Object.values(downloads), [downloads]);
   const activeDownloadsCount = downloadList.filter(
     (download) =>
@@ -214,17 +226,19 @@ export default function SearchPage() {
 
   const searchHandler = (event: FormEvent) => {
     event.preventDefault();
+    const query = searchQuery.trim();
+    if (query === "") return;
 
     // Support manual download with ! prefix
-    if (searchQuery.startsWith("!")) {
+    if (query.startsWith("!")) {
       dispatch(
         sendMessage({
           type: MessageType.DOWNLOAD,
-          payload: { book: searchQuery }
+          payload: { book: query }
         })
       );
     } else {
-      dispatch(sendSearch(searchQuery));
+      dispatch(sendSearch(query));
     }
 
     setSearchQuery("");
@@ -242,14 +256,13 @@ export default function SearchPage() {
         paddingBottom: "max(env(safe-area-inset-bottom), 1rem)",
         paddingLeft: "max(env(safe-area-inset-left), 1rem)",
         paddingRight: "max(env(safe-area-inset-right), 1rem)",
-        overflow: "auto",
+        overflowY: "auto",
+        overflowX: "hidden",
+        minWidth: 0,
         boxSizing: "border-box"
       })}>
       <form className={classes.wFull} onSubmit={(e) => searchHandler(e)}>
-        <Group
-          noWrap
-          spacing="md"
-          sx={(theme) => ({ marginBottom: theme.spacing.md })}>
+        <Group spacing="md" className={classes.searchGroup}>
           {!opened && (
             <Indicator
               disabled={!hasDownloadActivity}
@@ -280,6 +293,7 @@ export default function SearchPage() {
             type="search"
             icon={<MagnifyingGlass weight="bold" size={22} />}
             required
+            sx={{ flex: 1, minWidth: 260 }}
           />
 
           {isSearching ? (
@@ -319,10 +333,10 @@ export default function SearchPage() {
                     ? theme.colors.dark[6]
                     : theme.colors.blue[0]
               })}>
-              <Group position="apart" noWrap>
-                <Group spacing="xs" noWrap>
+              <Group position="apart" spacing="sm">
+                <Group spacing="xs" sx={{ minWidth: 0 }}>
                   <Books size={18} weight="bold" />
-                  <Text size="sm">
+                  <Text size="sm" sx={{ lineHeight: 1.35 }}>
                     Downloads appear in{" "}
                     <strong>Sidebar {"->"} Previous Downloads</strong>.
                   </Text>
@@ -451,9 +465,19 @@ export default function SearchPage() {
 
           {!showErrors && groupedBooks.length === 0 && (
             <Card withBorder radius="md" p="md">
-              <Text size="sm" color="dimmed">
-                No results match the current file type filter.
-              </Text>
+              {isSearching ? (
+                <Text size="sm" color="dimmed">
+                  Searching IRC lists...
+                </Text>
+              ) : hasLoadedResults && (activeItem?.results?.length ?? 0) === 0 ? (
+                <Text size="sm" color="dimmed">
+                  No results found for this query.
+                </Text>
+              ) : hasLoadedResults && (activeItem?.results?.length ?? 0) > 0 ? (
+                <Text size="sm" color="dimmed">
+                  No results match the current file type filter.
+                </Text>
+              ) : null}
             </Card>
           )}
 
