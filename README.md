@@ -136,19 +136,6 @@ Still recommended before public exposure:
 - `util/` archive and helper utilities
 - `books/` persisted downloads/logs (runtime data)
 
-## Before You Publish Your Fork
-
-Use this checklist before creating the public fork release:
-
-1. Confirm naming/branding in README and Docker image tags.
-2. Keep upstream attribution and MIT license text unchanged.
-3. Remove local/private credentials from compose/env files.
-4. Ensure CI runs `go test ./...` and frontend build.
-5. Verify multi-session isolation behavior on phone + desktop.
-6. Verify auth is enabled in production deployment.
-7. Document any fork-specific flags/defaults in release notes.
-8. Tag a release and include migration notes from upstream.
-
 ## Copyright / Legal
 
 OpenBooks is an IRC client for search services. You are responsible for complying with copyright and distribution laws in your jurisdiction.
