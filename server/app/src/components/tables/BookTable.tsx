@@ -29,10 +29,12 @@ import { useGetServersQuery } from "../../state/api";
 import { BookDetail } from "../../state/messages";
 import {
   DownloadStatus,
+  getDownloadKey,
   retryDownload,
   sendDownload
 } from "../../state/stateSlice";
 import { RootState, useAppDispatch } from "../../state/store";
+import { buildOnlineServerLookup, getServerPresence } from "../../utils/bookUtils";
 import FacetFilter, {
   ServerFacetEntry,
   StandardFacetEntry
@@ -59,6 +61,10 @@ interface BookTableProps {
 export default function BookTable({ books }: BookTableProps) {
   const { classes, cx, theme } = useTableStyles();
   const { data: servers } = useGetServersQuery(null);
+  const onlineServerLookup = useMemo(
+    () => buildOnlineServerLookup(servers),
+    [servers]
+  );
 
   const { ref: elementSizeRef, height, width } = useElementSize();
   const virtualizerRef = useRef<HTMLDivElement | null>(null);
@@ -66,20 +72,22 @@ export default function BookTable({ books }: BookTableProps) {
 
   // Sort books: online servers first, offline last
   const sortedBooks = useMemo(() => {
-    if (!servers) return books;
-
     return [...books].sort((a, b) => {
-      const aOnline = servers.includes(a.server);
-      const bOnline = servers.includes(b.server);
+      const presenceRank = (server: string) => {
+        const presence = getServerPresence(server, onlineServerLookup);
+        if (presence === "online") return 0;
+        if (presence === "unknown") return 1;
+        return 2;
+      };
+      const aPresence = presenceRank(a.server);
+      const bPresence = presenceRank(b.server);
 
-      // Online servers come first
-      if (aOnline && !bOnline) return -1;
-      if (!aOnline && bOnline) return 1;
+      if (aPresence !== bPresence) return aPresence - bPresence;
 
       // Within same category, sort by server name
       return a.server.localeCompare(b.server);
     });
-  }, [books, servers]);
+  }, [books, onlineServerLookup]);
 
   const columns = useMemo(() => {
     const cols = (cols: number) => (width / 12) * cols;
@@ -94,7 +102,8 @@ export default function BookTable({ books }: BookTableProps) {
           />
         ),
         cell: (props) => {
-          const online = servers?.includes(props.getValue());
+          const presence = getServerPresence(props.getValue(), onlineServerLookup);
+          const online = presence === "online";
           return (
             <Text
               size={12}
@@ -103,13 +112,15 @@ export default function BookTable({ books }: BookTableProps) {
               style={{ marginLeft: 20 }}>
               <Tooltip
                 position="top-start"
-                label={online ? "Online" : "Offline"}>
+                label={
+                  online ? "Online" : presence === "unknown" ? "Status syncing" : "Offline"
+                }>
                 <Indicator
                   zIndex={0}
                   position="middle-start"
                   offset={-16}
                   size={6}
-                  color={online ? "green.6" : "gray"}>
+                  color={online ? "green.6" : presence === "unknown" ? "indigo" : "gray"}>
                   {props.getValue()}
                 </Indicator>
               </Tooltip>
@@ -168,18 +179,18 @@ export default function BookTable({ books }: BookTableProps) {
         size: cols(1),
         enableColumnFilter: false,
         cell: ({ row }) => {
-          const online = servers?.includes(row.original.server) ?? false;
+          const presence = getServerPresence(row.original.server, onlineServerLookup);
           return (
             <DownloadButton
               book={row.original.full}
               serverName={row.original.server}
-              serverOnline={online}
+              serverOnline={presence === "online"}
             />
           );
         }
       })
     ];
-  }, [width, servers]);
+  }, [width, onlineServerLookup]);
 
   const table = useReactTable({
     data: sortedBooks,
@@ -294,12 +305,13 @@ function DownloadButton({
   serverOnline: boolean;
 }) {
   const dispatch = useAppDispatch();
+  const downloadKey = getDownloadKey(book);
 
   const download = useSelector(
-    (state: RootState) => state.state.downloads[book]
+    (state: RootState) => state.state.downloads[downloadKey]
   );
   const isInFlight = useSelector((state: RootState) =>
-    state.state.inFlightDownloads.includes(book)
+    state.state.inFlightDownloads.includes(downloadKey)
   );
 
   const [timeElapsed, setTimeElapsed] = useState(0);

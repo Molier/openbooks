@@ -3,6 +3,7 @@ import {
   Badge,
   Card,
   Group,
+  ScrollArea,
   Stack,
   Text,
   Tooltip
@@ -20,6 +21,10 @@ export default function RetryQueue() {
   const retryQueue = useAppSelector((state) => state.state.retryQueue);
 
   if (retryQueue.length === 0) return null;
+
+  const queue = [...retryQueue].sort(
+    (a, b) => (a.nextRetry ?? Number.MAX_SAFE_INTEGER) - (b.nextRetry ?? Number.MAX_SAFE_INTEGER)
+  );
 
   const formatNextRetry = (timestamp?: number) => {
     if (!timestamp) return "Unknown";
@@ -45,7 +50,7 @@ export default function RetryQueue() {
           <Group spacing="xs">
             <ArrowCounterClockwise size={18} weight="bold" />
             <Text size="sm" weight={600}>
-              Retry Queue ({retryQueue.length})
+              Retry Queue ({queue.length})
             </Text>
           </Group>
           <Badge size="xs" color="orange">
@@ -54,59 +59,60 @@ export default function RetryQueue() {
         </Group>
 
         <Text size="xs" color="dimmed">
-          These downloads failed or timed out. They'll be retried automatically.
+          Failed downloads will retry automatically. You can retry now or remove items.
         </Text>
 
-        <Stack spacing="xs">
-          {retryQueue.slice(0, 5).map((download: Download) => (
-            <Card key={download.book} p="xs" withBorder>
-              <Group position="apart" noWrap>
-                <Stack spacing={2} sx={{ flex: 1, minWidth: 0 }}>
-                  <Text size="xs" weight={500} lineClamp={1}>
-                    {download.serverName}
-                  </Text>
-                  <Text size="xs" color="dimmed" lineClamp={1}>
-                    Retry #{download.retryCount + 1} in{" "}
-                    {formatNextRetry(download.nextRetry)}
-                  </Text>
-                </Stack>
-                <Group spacing="xs" noWrap>
-                  <Tooltip label="Retry now">
-                    <ActionIcon
-                      size="sm"
-                      color="orange"
-                      variant="light"
-                      onClick={() =>
-                        dispatch(
-                          retryDownload({
-                            book: download.book,
-                            serverName: download.serverName
-                          })
-                        )
-                      }>
-                      <ArrowCounterClockwise size={14} weight="bold" />
-                    </ActionIcon>
-                  </Tooltip>
-                  <Tooltip label="Remove from queue">
-                    <ActionIcon
-                      size="sm"
-                      color="red"
-                      variant="light"
-                      onClick={() => dispatch(removeFromRetryQueue(download.book))}>
-                      <X size={14} weight="bold" />
-                    </ActionIcon>
-                  </Tooltip>
-                </Group>
-              </Group>
-            </Card>
-          ))}
-        </Stack>
+        <ScrollArea.Autosize maxHeight={240} type="auto">
+          <Stack spacing="xs">
+            {queue.map((download: Download) => (
+              <Card key={download.book} p="xs" withBorder radius="md">
+                <Group position="apart" align="flex-start" spacing={8}>
+                  <Stack spacing={2} sx={{ flex: 1, minWidth: 0 }}>
+                    <Text size="xs" weight={600} lineClamp={1}>
+                      {download.serverName}
+                    </Text>
+                    <Text size="xs" color="dimmed" lineClamp={1}>
+                      {download.book}
+                    </Text>
+                    <Text size="xs" color="dimmed">
+                      Retry #{download.retryCount + 1} in{" "}
+                      {formatNextRetry(download.nextRetry)}
+                    </Text>
+                  </Stack>
 
-        {retryQueue.length > 5 && (
-          <Text size="xs" color="dimmed" align="center">
-            +{retryQueue.length - 5} more in queue
-          </Text>
-        )}
+                  <Group spacing={6}>
+                    <Tooltip label="Retry now">
+                      <ActionIcon
+                        size="md"
+                        color="orange"
+                        variant="light"
+                        onClick={() =>
+                          dispatch(
+                            retryDownload({
+                              book: download.book,
+                              serverName: download.serverName
+                            })
+                          )
+                        }>
+                        <ArrowCounterClockwise size={14} weight="bold" />
+                      </ActionIcon>
+                    </Tooltip>
+
+                    <Tooltip label="Remove from queue">
+                      <ActionIcon
+                        size="md"
+                        color="red"
+                        variant="light"
+                        onClick={() => dispatch(removeFromRetryQueue(download.book))}>
+                        <X size={14} weight="bold" />
+                      </ActionIcon>
+                    </Tooltip>
+                  </Group>
+                </Group>
+              </Card>
+            ))}
+          </Stack>
+        </ScrollArea.Autosize>
       </Stack>
     </Card>
   );

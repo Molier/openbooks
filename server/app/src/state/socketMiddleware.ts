@@ -19,6 +19,7 @@ import {
   removeDownload,
   removeInFlightDownload,
   sendMessage,
+  setSidebarTab,
   setConnectionState,
   setSearchResults,
   setUsername,
@@ -112,12 +113,17 @@ const route = (dispatch: Dispatch<AnyAction>, msg: MessageEvent<any>): void => {
         downloadFile(downloadResponse?.downloadPath);
         dispatch(openbooksApi.util.invalidateTags(["books"]));
 
-        const book = downloadResponse.book;
+        const book =
+          downloadResponse.book ||
+          downloadResponse.detail ||
+          downloadResponse.downloadPath ||
+          "";
 
         // Clear timeout and update status
         if (book) {
           dispatch(clearDownloadTimeoutWithCleanup(book) as unknown as AnyAction);
           dispatch(updateDownloadStatus({ book, status: DownloadStatus.SUCCESS }));
+          dispatch(setSidebarTab("books"));
           // Clean up after 5 seconds
           setTimeout(() => {
             dispatch(removeDownload(book));

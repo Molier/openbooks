@@ -7,6 +7,99 @@ export interface GroupedBook {
   bestSource: BookDetail;
 }
 
+export type ServerPresence = "online" | "offline" | "unknown";
+
+const formatPriority: Record<string, number> = {
+  epub: 0,
+  azw3: 1,
+  mobi: 2,
+  pdf: 3,
+  txt: 4,
+  zip: 5,
+  rar: 6
+};
+
+export function normalizeServerName(server: string): string {
+  return server
+    .trim()
+    .replace(/^[:~&@%+!]+/, "")
+    .toLowerCase();
+}
+
+export function normalizeFormat(format: string): string {
+  return format.trim().toLowerCase();
+}
+
+export function getServerPresence(
+  server: string,
+  onlineServerLookup?: Set<string>
+): ServerPresence {
+  if (!onlineServerLookup || onlineServerLookup.size === 0) {
+    return "unknown";
+  }
+
+  return onlineServerLookup.has(normalizeServerName(server))
+    ? "online"
+    : "offline";
+}
+
+function serverPresenceRank(status: ServerPresence): number {
+  switch (status) {
+    case "online":
+      return 0;
+    case "unknown":
+      return 1;
+    default:
+      return 2;
+  }
+}
+
+function formatRank(format: string): number {
+  const normalized = normalizeFormat(format);
+  if (normalized in formatPriority) {
+    return formatPriority[normalized];
+  }
+  return 99;
+}
+
+export function buildOnlineServerLookup(servers?: string[]): Set<string> {
+  if (!servers || servers.length === 0) {
+    return new Set<string>();
+  }
+  return new Set(servers.map((server) => normalizeServerName(server)));
+}
+
+function compareSources(
+  a: BookDetail,
+  b: BookDetail,
+  onlineServerLookup?: Set<string>
+): number {
+  const aPresence = serverPresenceRank(
+    getServerPresence(a.server, onlineServerLookup)
+  );
+  const bPresence = serverPresenceRank(
+    getServerPresence(b.server, onlineServerLookup)
+  );
+
+  if (aPresence !== bPresence) {
+    return aPresence - bPresence;
+  }
+
+  const aFormat = formatRank(a.format);
+  const bFormat = formatRank(b.format);
+  if (aFormat !== bFormat) {
+    return aFormat - bFormat;
+  }
+
+  const aSize = parseSizeToBytes(a.size);
+  const bSize = parseSizeToBytes(b.size);
+  if (aSize !== bSize) {
+    return bSize - aSize;
+  }
+
+  return a.server.localeCompare(b.server);
+}
+
 /**
  * Groups books by title and author (case-insensitive)
  * Returns an array of grouped books with sources sorted by online status and size
@@ -15,6 +108,7 @@ export function groupBooks(
   books: BookDetail[],
   onlineServers?: string[]
 ): GroupedBook[] {
+  const onlineServerLookup = buildOnlineServerLookup(onlineServers);
   const groups = new Map<string, BookDetail[]>();
 
   // Group books by normalized title + author
@@ -28,33 +122,32 @@ export function groupBooks(
   });
 
   // Convert groups to array and sort sources within each group
-  return Array.from(groups.entries()).map(([_, sources]) => {
-    // Sort sources: online first, then by size (largest first)
-    const sortedSources = [...sources].sort((a, b) => {
-      if (onlineServers) {
-        const aOnline = onlineServers.includes(a.server);
-        const bOnline = onlineServers.includes(b.server);
+  return Array.from(groups.entries())
+    .map(([_, sources]) => {
+      const sortedSources = [...sources].sort((a, b) =>
+        compareSources(a, b, onlineServerLookup)
+      );
 
-        // Online servers come first
-        if (aOnline && !bOnline) return -1;
-        if (!aOnline && bOnline) return 1;
+      const bestSource = sortedSources[0];
+
+      return {
+        title: bestSource.title,
+        author: bestSource.author,
+        sources: sortedSources,
+        bestSource
+      };
+    })
+    .sort((a, b) => {
+      const sourceDiff = compareSources(
+        a.bestSource,
+        b.bestSource,
+        onlineServerLookup
+      );
+      if (sourceDiff !== 0) {
+        return sourceDiff;
       }
-
-      // Within same category, sort by size (largest first)
-      const aSize = parseSizeToBytes(a.size);
-      const bSize = parseSizeToBytes(b.size);
-      return bSize - aSize;
+      return a.title.localeCompare(b.title);
     });
-
-    const bestSource = sortedSources[0];
-
-    return {
-      title: bestSource.title,
-      author: bestSource.author,
-      sources: sortedSources,
-      bestSource
-    };
-  });
 }
 
 /**
@@ -97,7 +190,7 @@ export function formatSize(size: string): string {
  * Parses size string to bytes for comparison
  * Used internally for sorting
  */
-function parseSizeToBytes(size: string): number {
+export function parseSizeToBytes(size: string): number {
   if (!size || size === "N/A" || size.trim() === "") {
     return 0;
   }

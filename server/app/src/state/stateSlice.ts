@@ -28,9 +28,47 @@ export interface Download {
   nextRetry?: number;
 }
 
+const normalizeWhitespace = (value: string): string =>
+  value.trim().replace(/\s+/g, " ");
+
+const normalizeLooseBookName = (value: string): string =>
+  normalizeWhitespace(value)
+    .toLowerCase()
+    .replace(/[_\-.]+/g, " ");
+
+export const getDownloadKey = (book: string): string =>
+  normalizeWhitespace(book).toLowerCase();
+
+const resolveDownloadKey = (
+  downloads: Record<string, Download>,
+  book: string
+): string => {
+  const directKey = getDownloadKey(book);
+  if (downloads[directKey]) {
+    return directKey;
+  }
+
+  const looseBook = normalizeLooseBookName(book);
+  if (looseBook !== "") {
+    for (const [key, download] of Object.entries(downloads)) {
+      const looseExisting = normalizeLooseBookName(download.book);
+      if (
+        looseExisting === looseBook ||
+        looseExisting.includes(looseBook) ||
+        looseBook.includes(looseExisting)
+      ) {
+        return key;
+      }
+    }
+  }
+
+  return directKey;
+};
+
 interface AppState {
   isConnected: boolean;
   isSidebarOpen: boolean;
+  sidebarTab: "books" | "history";
   activeItem: HistoryItem | null;
   username?: string;
   inFlightDownloads: string[]; // Legacy - keeping for backward compat
@@ -47,9 +85,20 @@ const loadActive = (): HistoryItem | null => {
   }
 };
 
+const loadSidebarTab = (): "books" | "history" => {
+  try {
+    const raw = localStorage.getItem("sidebar-tab");
+    const tab = raw ? JSON.parse(raw) : null;
+    return tab === "books" ? "books" : "history";
+  } catch (err) {
+    return "history";
+  }
+};
+
 const initialState: AppState = {
   isConnected: false,
   isSidebarOpen: false,
+  sidebarTab: loadSidebarTab(),
   activeItem: loadActive(),
   username: undefined,
   inFlightDownloads: [],
@@ -61,10 +110,29 @@ const downloadTimeouts = new Map<string, number>();
 let searchTimeoutHandle: number | undefined;
 
 const clearDownloadTimer = (book: string) => {
-  const timeoutId = downloadTimeouts.get(book);
+  const directKey = getDownloadKey(book);
+  let timeoutId = downloadTimeouts.get(directKey);
+  let resolvedKey = directKey;
+  if (!timeoutId) {
+    const looseBook = normalizeLooseBookName(book);
+    if (looseBook !== "") {
+      for (const [key, id] of downloadTimeouts.entries()) {
+        if (
+          normalizeLooseBookName(key) === looseBook ||
+          normalizeLooseBookName(key).includes(looseBook) ||
+          looseBook.includes(normalizeLooseBookName(key))
+        ) {
+          timeoutId = id;
+          resolvedKey = key;
+          break;
+        }
+      }
+    }
+  }
+
   if (timeoutId) {
     clearTimeout(timeoutId);
-    downloadTimeouts.delete(book);
+    downloadTimeouts.delete(resolvedKey);
   }
 };
 
@@ -89,12 +157,16 @@ const stateSlice = createSlice({
       state.username = action.payload;
     },
     addInFlightDownload(state, action: PayloadAction<string>) {
-      state.inFlightDownloads.push(action.payload);
+      const key = getDownloadKey(action.payload);
+      if (!state.inFlightDownloads.includes(key)) {
+        state.inFlightDownloads.push(key);
+      }
     },
     removeInFlightDownload(state, action: PayloadAction<string | undefined>) {
       if (action.payload) {
+        const key = resolveDownloadKey(state.downloads, action.payload);
         state.inFlightDownloads = state.inFlightDownloads.filter(
-          (item) => item !== action.payload
+          (item) => item !== key
         );
       } else {
         state.inFlightDownloads.shift();
@@ -103,16 +175,17 @@ const stateSlice = createSlice({
     // Enhanced download management
     startDownload(
       state,
-      action: PayloadAction<{ book: string; serverName: string }>
+      action: PayloadAction<{ book: string; serverName: string; retryCount?: number }>
     ) {
-      const { book, serverName } = action.payload;
-      state.downloads[book] = {
+      const { book, serverName, retryCount = 0 } = action.payload;
+      const key = getDownloadKey(book);
+      state.downloads[key] = {
         book,
         serverName,
         status: DownloadStatus.PENDING,
         timestamp: Date.now(),
         progress: 0,
-        retryCount: 0
+        retryCount
       };
     },
     updateDownloadStatus(
@@ -120,10 +193,14 @@ const stateSlice = createSlice({
       action: PayloadAction<{ book: string; status: DownloadStatus }>
     ) {
       const { book, status } = action.payload;
-      if (state.downloads[book]) {
-        state.downloads[book].status = status;
+      const key = resolveDownloadKey(state.downloads, book);
+      if (state.downloads[key]) {
+        state.downloads[key].status = status;
         if (status === DownloadStatus.SUCCESS) {
-          state.downloads[book].progress = 100;
+          state.downloads[key].progress = 100;
+          state.retryQueue = state.retryQueue.filter(
+            (d) => getDownloadKey(d.book) !== key
+          );
         }
       }
     },
@@ -132,8 +209,10 @@ const stateSlice = createSlice({
       action: PayloadAction<{ book: string; progress: number }>
     ) {
       const { book, progress } = action.payload;
-      if (state.downloads[book]) {
-        state.downloads[book].progress = Math.max(0, Math.min(100, progress));
+      const key = resolveDownloadKey(state.downloads, book);
+      if (state.downloads[key]) {
+        state.downloads[key].progress = Math.max(0, Math.min(100, progress));
+        state.downloads[key].status = DownloadStatus.DOWNLOADING;
       }
     },
     setDownloadTimeout(
@@ -141,36 +220,55 @@ const stateSlice = createSlice({
       action: PayloadAction<{ book: string; timeoutId: number }>
     ) {
       const { book, timeoutId } = action.payload;
-      if (state.downloads[book]) {
-        state.downloads[book].timeoutId = timeoutId;
+      const key = resolveDownloadKey(state.downloads, book);
+      if (state.downloads[key]) {
+        state.downloads[key].timeoutId = timeoutId;
       }
     },
     clearDownloadTimeout(state, action: PayloadAction<string>) {
-      const book = action.payload;
-      if (state.downloads[book]?.timeoutId) {
-        delete state.downloads[book].timeoutId;
+      const key = resolveDownloadKey(state.downloads, action.payload);
+      if (state.downloads[key]?.timeoutId) {
+        delete state.downloads[key].timeoutId;
       }
     },
     removeDownload(state, action: PayloadAction<string>) {
-      const book = action.payload;
-      delete state.downloads[book];
+      const key = resolveDownloadKey(state.downloads, action.payload);
+      delete state.downloads[key];
+      state.inFlightDownloads = state.inFlightDownloads.filter(
+        (inFlight) => inFlight !== key
+      );
     },
     addToRetryQueue(state, action: PayloadAction<Download>) {
       const download = action.payload;
-      // Don't add if already in queue
-      if (!state.retryQueue.find((d) => d.book === download.book)) {
+      const key = getDownloadKey(download.book);
+      const existingIndex = state.retryQueue.findIndex(
+        (d) => getDownloadKey(d.book) === key
+      );
+      const nextRetry = Date.now() + 3600000;
+      if (existingIndex !== -1) {
+        state.retryQueue[existingIndex] = {
+          ...state.retryQueue[existingIndex],
+          ...download,
+          nextRetry
+        };
+      } else {
         state.retryQueue.push({
           ...download,
-          nextRetry: Date.now() + 3600000 // Retry in 1 hour
+          nextRetry
         });
       }
     },
     removeFromRetryQueue(state, action: PayloadAction<string>) {
-      state.retryQueue = state.retryQueue.filter((d) => d.book !== action.payload);
+      const key = getDownloadKey(action.payload);
+      state.retryQueue = state.retryQueue.filter(
+        (d) => getDownloadKey(d.book) !== key
+      );
     },
     incrementRetryCount(state, action: PayloadAction<string>) {
-      const book = action.payload;
-      const queueItem = state.retryQueue.find((d) => d.book === book);
+      const key = getDownloadKey(action.payload);
+      const queueItem = state.retryQueue.find(
+        (d) => getDownloadKey(d.book) === key
+      );
       if (queueItem) {
         queueItem.retryCount++;
         queueItem.nextRetry = Date.now() + 3600000; // Next retry in 1 hour
@@ -178,6 +276,13 @@ const stateSlice = createSlice({
     },
     toggleSidebar(state) {
       state.isSidebarOpen = !state.isSidebarOpen;
+    },
+    openSidebarTab(state, action: PayloadAction<"books" | "history">) {
+      state.sidebarTab = action.payload;
+      state.isSidebarOpen = true;
+    },
+    setSidebarTab(state, action: PayloadAction<"books" | "history">) {
+      state.sidebarTab = action.payload;
     },
     setSearchTimeout(state, action: PayloadAction<number>) {
       state.searchTimeoutId = action.payload;
@@ -201,21 +306,26 @@ const sendMessage = createAction("socket/send_message", (message: any) => ({
 const sendDownload = createAsyncThunk(
   "state/send_download",
   (
-    { book, serverName }: { book: string; serverName: string },
+    {
+      book,
+      serverName,
+      retryCount = 0
+    }: { book: string; serverName: string; retryCount?: number },
     { dispatch }
   ) => {
-    clearDownloadTimer(book);
+    const key = getDownloadKey(book);
+    clearDownloadTimer(key);
 
     // Legacy support
-    dispatch(addInFlightDownload(book));
+    dispatch(addInFlightDownload(key));
 
     // Enhanced tracking
-    dispatch(startDownload({ book, serverName }));
+    dispatch(startDownload({ book, serverName, retryCount }));
 
     // Set 60-second timeout
     const timeoutId = window.setTimeout(() => {
       dispatch(updateDownloadStatus({ book, status: DownloadStatus.TIMEOUT }));
-      dispatch(removeInFlightDownload(book));
+      dispatch(removeInFlightDownload(key));
       dispatch(
         addToRetryQueue({
           book,
@@ -223,11 +333,11 @@ const sendDownload = createAsyncThunk(
           status: DownloadStatus.TIMEOUT,
           timestamp: Date.now(),
           progress: 0,
-          retryCount: 0
+          retryCount
         })
       );
     }, 60000);
-    downloadTimeouts.set(book, timeoutId);
+    downloadTimeouts.set(key, timeoutId);
 
     dispatch(setDownloadTimeout({ book, timeoutId }));
 
@@ -243,26 +353,38 @@ const sendDownload = createAsyncThunk(
 
 const retryDownload = createAsyncThunk(
   "state/retry_download",
-  ({ book, serverName }: { book: string; serverName: string }, { dispatch }) => {
+  (
+    { book, serverName }: { book: string; serverName: string },
+    { dispatch, getState }
+  ) => {
+    const state = (getState as () => RootState)();
+    const existingRetryCount =
+      state.state.retryQueue.find((d) => getDownloadKey(d.book) === getDownloadKey(book))
+        ?.retryCount ?? 0;
+
     dispatch(removeFromRetryQueue(book));
-    dispatch(sendDownload({ book, serverName }));
+    dispatch(sendDownload({ book, serverName, retryCount: existingRetryCount + 1 }));
   }
 );
 
 const cancelDownload = createAsyncThunk(
   "state/cancel_download",
-  (book: string, { dispatch }) => {
-    clearDownloadTimer(book);
+  (book: string, { dispatch, getState }) => {
+    const state = (getState as () => RootState)();
+    const key = resolveDownloadKey(state.state.downloads, book);
+    clearDownloadTimer(key);
     dispatch(clearDownloadTimeout(book));
     dispatch(removeDownload(book));
-    dispatch(removeInFlightDownload(book));
+    dispatch(removeInFlightDownload(key));
   }
 );
 
 const clearDownloadTimeoutWithCleanup = createAsyncThunk(
   "state/clear_download_timeout_with_cleanup",
-  (book: string, { dispatch }) => {
-    clearDownloadTimer(book);
+  (book: string, { dispatch, getState }) => {
+    const state = (getState as () => RootState)();
+    const key = resolveDownloadKey(state.state.downloads, book);
+    clearDownloadTimer(key);
     dispatch(clearDownloadTimeout(book));
   }
 );
@@ -377,6 +499,8 @@ export const {
   removeFromRetryQueue,
   incrementRetryCount,
   toggleSidebar,
+  openSidebarTab,
+  setSidebarTab,
   setSearchTimeout,
   clearSearchTimeout,
   cancelSearch

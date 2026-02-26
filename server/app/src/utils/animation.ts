@@ -2,8 +2,8 @@ import { HTMLMotionProps } from "framer-motion";
 
 export const defaultAnimation: HTMLMotionProps<"div"> = {
   layout: true,
-  initial: { scale: 0.8, opacity: 0 },
-  animate: { scale: 1, opacity: 1 },
-  exit: { scale: 0.8, opacity: 0 },
-  transition: { type: "tween" }
+  initial: { y: 8, opacity: 0 },
+  animate: { y: 0, opacity: 1 },
+  exit: { y: -6, opacity: 0 },
+  transition: { duration: 0.22, ease: "easeOut" }
 };

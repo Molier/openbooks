@@ -39,6 +39,7 @@ store.subscribe(
   throttle(() => {
     saveState("history", store.getState().history.items);
     saveState("active", store.getState().state.activeItem);
+    saveState("sidebar-tab", store.getState().state.sidebarTab);
   }, 1000)
 );
 

@@ -2,18 +2,23 @@ import {
   ActionIcon,
   Badge,
   Button,
+  Card,
   Center,
+  Chip,
   createStyles,
   Group,
   Image,
+  Indicator,
   MediaQuery,
+  ScrollArea,
   Select,
   Stack,
   Text,
   TextInput,
   Title
 } from "@mantine/core";
-import { MagnifyingGlass, Sidebar } from "@phosphor-icons/react";
+import { Books, MagnifyingGlass, Sidebar } from "@phosphor-icons/react";
+import { AnimatePresence, motion } from "framer-motion";
 import { FormEvent, useEffect, useMemo, useState } from "react";
 import image from "../assets/reading.svg";
 import BookCard from "../components/cards/BookCard";
@@ -24,13 +29,16 @@ import { MessageType, ParseError } from "../state/messages";
 import {
   cancelSearchWithCleanup,
   Download,
+  DownloadStatus,
+  openSidebarTab,
   retryDownload,
   sendMessage,
   sendSearch,
   toggleSidebar
 } from "../state/stateSlice";
 import { useAppDispatch, useAppSelector } from "../state/store";
-import { groupBooks } from "../utils/bookUtils";
+import { defaultAnimation } from "../utils/animation";
+import { groupBooks, normalizeFormat, parseSizeToBytes } from "../utils/bookUtils";
 
 const useStyles = createStyles((theme) => ({
   wFull: {
@@ -49,6 +57,22 @@ const useStyles = createStyles((theme) => ({
   cardsContainer: {
     width: "100%",
     maxWidth: "100%"
+  },
+  filtersBar: {
+    width: "100%",
+    marginBottom: 12
+  },
+  flowCard: {
+    width: "100%",
+    marginBottom: 12
+  },
+  sidebarPulse: {
+    animation: "sidebarPulse 2.8s ease-in-out infinite"
+  },
+  "@keyframes sidebarPulse": {
+    "0%": { transform: "scale(1)" },
+    "50%": { transform: "scale(1.04)" },
+    "100%": { transform: "scale(1)" }
   }
 }));
 
@@ -57,30 +81,38 @@ export default function SearchPage() {
   const activeItem = useAppSelector((store) => store.state.activeItem);
   const opened = useAppSelector((store) => store.state.isSidebarOpen);
   const retryQueue = useAppSelector((store) => store.state.retryQueue);
+  const downloads = useAppSelector((store) => store.state.downloads);
   const { data: servers } = useGetServersQuery(null);
 
   const [searchQuery, setSearchQuery] = useState("");
   const [showErrors, setShowErrors] = useState(false);
   const [sortMode, setSortMode] = useState("relevance");
+  const [formatFilter, setFormatFilter] = useState("all");
+  const [autoEpubFilterEnabled, setAutoEpubFilterEnabled] = useState(false);
 
   // Periodic retry processor - check every minute
   useEffect(() => {
     const interval = setInterval(() => {
       const now = Date.now();
-      retryQueue.forEach((download: Download) => {
+      const dueRetries = retryQueue
+        .filter(
+          (download: Download) =>
+            !!download.nextRetry &&
+            download.nextRetry <= now &&
+            download.retryCount < 24
+        )
+        .slice(0, 3);
+
+      dueRetries.forEach((download: Download, index: number) => {
         // Retry if nextRetry time has passed and retry count < 24 (1 day of hourly retries)
-        if (
-          download.nextRetry &&
-          download.nextRetry <= now &&
-          download.retryCount < 24
-        ) {
+        window.setTimeout(() => {
           dispatch(
             retryDownload({
               book: download.book,
               serverName: download.serverName
             })
           );
-        }
+        }, index * 1500);
       });
     }, 60000); // Check every minute
 
@@ -91,23 +123,79 @@ export default function SearchPage() {
   const errorCount = activeItem?.errors?.length ?? 0;
   const validInput = searchQuery !== "";
   const isSearching = activeItem?.results === null;
+  const downloadList = useMemo(() => Object.values(downloads), [downloads]);
+  const activeDownloadsCount = downloadList.filter(
+    (download) =>
+      download.status === DownloadStatus.PENDING ||
+      download.status === DownloadStatus.DOWNLOADING
+  ).length;
+  const hasDownloadActivity =
+    activeDownloadsCount > 0 ||
+    retryQueue.length > 0 ||
+    downloadList.some((download) => download.status === DownloadStatus.SUCCESS);
 
   const { classes, theme } = useStyles();
+  const formatCounts = useMemo(() => {
+    const counts = new Map<string, number>();
+    (activeItem?.results ?? []).forEach((book) => {
+      const format = normalizeFormat(book.format);
+      counts.set(format, (counts.get(format) ?? 0) + 1);
+    });
+    return counts;
+  }, [activeItem?.results]);
+  const formatOptions = useMemo(() => {
+    const formats = Array.from(formatCounts.entries());
+    const withAll: Array<{ value: string; label: string }> = [
+      {
+        value: "all",
+        label: `All (${formats.reduce((sum, [, count]) => sum + count, 0)})`
+      }
+    ];
+    const sortedFormats = formats.sort((a, b) => {
+      if (a[0] === "epub") return -1;
+      if (b[0] === "epub") return 1;
+      return a[0].localeCompare(b[0]);
+    });
+    return withAll.concat(
+      sortedFormats.map(([format, count]) => ({
+        value: format,
+        label: `${format.toUpperCase()} (${count})`
+      }))
+    );
+  }, [formatCounts]);
+
+  useEffect(() => {
+    if (!activeItem || !activeItem.results) {
+      setFormatFilter("all");
+      setAutoEpubFilterEnabled(false);
+      return;
+    }
+
+    const hasEpub = (activeItem.results ?? []).some(
+      (book) => normalizeFormat(book.format) === "epub"
+    );
+    if (hasEpub) {
+      setFormatFilter("epub");
+      setAutoEpubFilterEnabled(true);
+      return;
+    }
+
+    setFormatFilter("all");
+    setAutoEpubFilterEnabled(false);
+  }, [activeItem?.timestamp, activeItem?.results]);
+
+  const filteredResults = useMemo(() => {
+    const results = activeItem?.results ?? [];
+    if (formatFilter === "all") {
+      return results;
+    }
+    return results.filter((book) => normalizeFormat(book.format) === formatFilter);
+  }, [activeItem?.results, formatFilter]);
 
   // Group books for card display
   const groupedBooks = useMemo(() => {
-    if (!activeItem?.results) return [];
-    const grouped = groupBooks(activeItem.results, servers);
-
-    const parseSize = (size: string): number => {
-      const match = size.trim().match(/^([\d.]+)\s*(KB|MB|GB)$/i);
-      if (!match) return 0;
-      const value = parseFloat(match[1]);
-      const unit = match[2].toUpperCase();
-      if (unit === "GB") return value * 1024 * 1024 * 1024;
-      if (unit === "MB") return value * 1024 * 1024;
-      return value * 1024;
-    };
+    if (!filteredResults.length) return [];
+    const grouped = groupBooks(filteredResults, servers);
 
     switch (sortMode) {
       case "title-asc":
@@ -116,12 +204,13 @@ export default function SearchPage() {
         return [...grouped].sort((a, b) => a.author.localeCompare(b.author));
       case "size-desc":
         return [...grouped].sort(
-          (a, b) => parseSize(b.bestSource.size) - parseSize(a.bestSource.size)
+          (a, b) =>
+            parseSizeToBytes(b.bestSource.size) - parseSizeToBytes(a.bestSource.size)
         );
       default:
         return grouped;
     }
-  }, [activeItem?.results, servers, sortMode]);
+  }, [filteredResults, servers, sortMode]);
 
   const searchHandler = (event: FormEvent) => {
     event.preventDefault();
@@ -162,9 +251,20 @@ export default function SearchPage() {
           spacing="md"
           sx={(theme) => ({ marginBottom: theme.spacing.md })}>
           {!opened && (
-            <ActionIcon size="lg" onClick={() => dispatch(toggleSidebar())}>
-              <Sidebar weight="bold" size={20}></Sidebar>
-            </ActionIcon>
+            <Indicator
+              disabled={!hasDownloadActivity}
+              color="brand"
+              label={activeDownloadsCount > 0 ? activeDownloadsCount : undefined}
+              size={16}
+              zIndex={1}
+              withBorder={false}>
+              <ActionIcon
+                size="lg"
+                className={hasDownloadActivity ? classes.sidebarPulse : undefined}
+                onClick={() => dispatch(toggleSidebar())}>
+                <Sidebar weight="bold" size={20}></Sidebar>
+              </ActionIcon>
+            </Indicator>
           )}
           <TextInput
             className={classes.wFull}
@@ -206,15 +306,80 @@ export default function SearchPage() {
         </Group>
       </form>
 
+      <AnimatePresence>
+        {hasDownloadActivity && (
+          <motion.div className={classes.flowCard} {...defaultAnimation}>
+            <Card
+              withBorder
+              radius="md"
+              p="sm"
+              sx={(theme) => ({
+                backgroundColor:
+                  theme.colorScheme === "dark"
+                    ? theme.colors.dark[6]
+                    : theme.colors.blue[0]
+              })}>
+              <Group position="apart" noWrap>
+                <Group spacing="xs" noWrap>
+                  <Books size={18} weight="bold" />
+                  <Text size="sm">
+                    Downloads appear in{" "}
+                    <strong>Sidebar {"->"} Previous Downloads</strong>.
+                  </Text>
+                </Group>
+                <Button
+                  size="xs"
+                  radius="md"
+                  onClick={() => dispatch(openSidebarTab("books"))}>
+                  Open
+                </Button>
+              </Group>
+            </Card>
+          </motion.div>
+        )}
+      </AnimatePresence>
+
       <RetryQueue />
+
+      {!showErrors && formatOptions.length > 2 && (
+        <motion.div className={classes.filtersBar} {...defaultAnimation}>
+          <ScrollArea type="never">
+            <Chip.Group
+              value={formatFilter}
+              onChange={(value: string) => {
+                setFormatFilter(value || "all");
+                setAutoEpubFilterEnabled(false);
+              }}
+              multiple={false}>
+              <Group noWrap spacing={8}>
+                {formatOptions.map((option) => (
+                  <Chip
+                    key={option.value}
+                    value={option.value}
+                    radius="md"
+                    size="sm"
+                    variant="filled">
+                    {option.label}
+                  </Chip>
+                ))}
+              </Group>
+            </Chip.Group>
+          </ScrollArea>
+          {autoEpubFilterEnabled && formatFilter === "epub" && (
+            <Text size="xs" color="dimmed" mt={6}>
+              EPUB filter auto-enabled because EPUB sources were found.
+            </Text>
+          )}
+        </motion.div>
+      )}
 
       {activeItem && (groupedBooks.length > 0 || hasErrors) && (
         <div className={classes.resultsBar}>
           <Group spacing="xs">
             {!showErrors && (
               <Text size="sm" color="dimmed">
-                {groupedBooks.length}{" "}
-                {groupedBooks.length === 1 ? "result" : "results"}
+                {groupedBooks.length} {groupedBooks.length === 1 ? "result" : "results"}
+                {formatFilter !== "all" && ` (${formatFilter.toUpperCase()})`}
               </Text>
             )}
             {hasErrors && (
@@ -272,10 +437,25 @@ export default function SearchPage() {
         </Center>
       ) : (
         <div className={classes.cardsContainer}>
-          {!showErrors &&
-            groupedBooks.map((groupedBook, index) => (
-              <BookCard key={`book-${index}`} groupedBook={groupedBook} />
-            ))}
+          {!showErrors && (
+            <AnimatePresence mode="popLayout">
+              {groupedBooks.map((groupedBook) => (
+                <motion.div
+                  key={`${groupedBook.title}-${groupedBook.author}`}
+                  {...defaultAnimation}>
+                  <BookCard groupedBook={groupedBook} />
+                </motion.div>
+              ))}
+            </AnimatePresence>
+          )}
+
+          {!showErrors && groupedBooks.length === 0 && (
+            <Card withBorder radius="md" p="md">
+              <Text size="sm" color="dimmed">
+                No results match the current file type filter.
+              </Text>
+            </Card>
+          )}
 
           {showErrors &&
             (activeItem?.errors ?? []).map((error: ParseError, index: number) => (

@@ -1,5 +1,6 @@
 import { createApi, fetchBaseQuery } from "@reduxjs/toolkit/query/react";
 import { getApiURL } from "./util";
+import { normalizeServerName } from "../utils/bookUtils";
 
 export interface IrcServer {
   elevatedUsers?: string[];
@@ -23,7 +24,18 @@ export const openbooksApi = createApi({
     getServers: builder.query<string[], null>({
       query: () => `servers`,
       transformResponse: (ircServers: IrcServer) => {
-        return ircServers.elevatedUsers ?? [];
+        const elevated = ircServers.elevatedUsers ?? [];
+        const regular = ircServers.regularUsers ?? [];
+        const deduped = new Map<string, string>();
+
+        [...elevated, ...regular].forEach((server) => {
+          const key = normalizeServerName(server);
+          if (key !== "" && !deduped.has(key)) {
+            deduped.set(key, server);
+          }
+        });
+
+        return Array.from(deduped.values());
       },
       providesTags: ["servers"]
     }),
