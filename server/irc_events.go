@@ -1,6 +1,7 @@
 package server
 
 import (
+	"errors"
 	"fmt"
 	"os"
 	"path/filepath"
@@ -43,23 +44,47 @@ func (server *server) broadcast(message interface{}) {
 // searchResultHandler downloads from DCC server, parses data, and sends data to all clients
 func (server *server) searchResultHandler(downloadDir string) core.HandlerFunc {
 	return func(text string) {
+		request, hasRequest := server.claimSearchRequest()
 		server.log.Printf("Received search results: %s\n", text)
 		extractedPath, err := core.DownloadExtractDCCStringWithOptions(filepath.Join(downloadDir, "books"), text, nil, server.config.AutoExtractAll)
 		if err != nil {
 			server.log.Println(err)
-			server.broadcast(newErrorResponse("Error when downloading search results."))
+			if hasRequest {
+				server.sendToClient(request.requester, newErrorResponse("Error when downloading search results."))
+				parseErr := core.ParseError{
+					Line:  "",
+					Error: errors.New("unable to download search results file"),
+				}
+				server.sendToClient(request.requester, newSearchResponse([]core.BookDetail{}, []core.ParseError{parseErr}))
+			} else {
+				server.broadcast(newErrorResponse("Error when downloading search results."))
+			}
 			return
 		}
 
 		bookResults, parseErrors, err := core.ParseSearchFile(extractedPath)
 		if err != nil {
 			server.log.Println(err)
-			server.broadcast(newErrorResponse("Error when parsing search results."))
+			if hasRequest {
+				server.sendToClient(request.requester, newErrorResponse("Error when parsing search results."))
+				parseErr := core.ParseError{
+					Line:  "",
+					Error: errors.New("unable to parse search results file"),
+				}
+				server.sendToClient(request.requester, newSearchResponse([]core.BookDetail{}, []core.ParseError{parseErr}))
+			} else {
+				server.broadcast(newErrorResponse("Error when parsing search results."))
+			}
 			return
 		}
 
 		if len(bookResults) == 0 && len(parseErrors) == 0 {
-			server.noResultsHandler(text)
+			if hasRequest {
+				server.sendToClient(request.requester, newStatusResponse(WARNING, "No results found for the query."))
+				server.sendToClient(request.requester, newSearchResponse([]core.BookDetail{}, []core.ParseError{}))
+			} else {
+				server.broadcast(newStatusResponse(WARNING, "No results found for the query."))
+			}
 			return
 		}
 
@@ -72,7 +97,11 @@ func (server *server) searchResultHandler(downloadDir string) core.HandlerFunc {
 		}
 
 		server.log.Printf("Sending %d search results.\n", len(bookResults))
-		server.broadcast(newSearchResponse(bookResults, parseErrors))
+		if hasRequest {
+			server.sendToClient(request.requester, newSearchResponse(bookResults, parseErrors))
+		} else {
+			server.broadcast(newSearchResponse(bookResults, parseErrors))
+		}
 
 		err = os.Remove(extractedPath)
 		if err != nil {
@@ -84,7 +113,8 @@ func (server *server) searchResultHandler(downloadDir string) core.HandlerFunc {
 // bookResultHandler downloads the book file and sends it over the websocket to all clients
 func (server *server) bookResultHandler(downloadDir string, disableBrowserDownloads bool) core.HandlerFunc {
 	return func(text string) {
-		requestedBook := server.claimDownloadRequestForResponse(text)
+		request, hasRequest := server.claimDownloadRequestForResponse(text)
+		requestedBook := request.book
 
 		progressBook := requestedBook
 		var progressWriter *transferProgressWriter
@@ -94,14 +124,23 @@ func (server *server) bookResultHandler(downloadDir string, disableBrowserDownlo
 				progressBook = downloadMeta.Filename
 			}
 			progressWriter = newTransferProgressWriter(downloadMeta.Size, func(received, total int64) {
-				server.broadcast(newDownloadProgressResponse(progressBook, received, total))
+				response := newDownloadProgressResponse(progressBook, received, total)
+				if hasRequest {
+					server.sendToClient(request.requester, response)
+					return
+				}
+				server.broadcast(response)
 			})
 		}
 
 		extractedPath, err := core.DownloadExtractDCCStringWithOptions(filepath.Join(downloadDir, "books"), text, progressWriter, server.config.AutoExtractAll)
 		if err != nil {
 			server.log.Println(err)
-			server.broadcast(newErrorResponse("Error when downloading book."))
+			if hasRequest {
+				server.sendToClient(request.requester, newErrorResponse("Error when downloading book."))
+			} else {
+				server.broadcast(newErrorResponse("Error when downloading book."))
+			}
 			return
 		}
 
@@ -110,27 +149,54 @@ func (server *server) bookResultHandler(downloadDir string, disableBrowserDownlo
 		}
 
 		server.log.Printf("Sending book entitled '%s'.\n", filepath.Base(extractedPath))
-		server.broadcast(newDownloadResponse(progressBook, extractedPath, disableBrowserDownloads))
+		response := newDownloadResponse(progressBook, extractedPath, disableBrowserDownloads)
+		if hasRequest {
+			server.sendToClient(request.requester, response)
+		} else {
+			server.broadcast(response)
+		}
+		server.broadcast(newBooksUpdatedResponse())
 	}
 }
 
 // NoResults is called when the server returns that nothing was found for the query
 func (server *server) noResultsHandler(_ string) {
-	server.broadcast(newErrorResponse("No results found for the query."))
+	request, ok := server.claimSearchRequest()
+	if ok {
+		server.sendToClient(request.requester, newStatusResponse(WARNING, "No results found for the query."))
+		server.sendToClient(request.requester, newSearchResponse([]core.BookDetail{}, []core.ParseError{}))
+		return
+	}
+	server.broadcast(newStatusResponse(WARNING, "No results found for the query."))
 }
 
 // BadServer is called when the requested download fails because the server is not available
-func (server *server) badServerHandler(_ string) {
+func (server *server) badServerHandler(line string) {
+	request, ok := server.claimDownloadRequestBySender(line)
+	if ok {
+		server.sendToClient(request.requester, newErrorResponse("Server is not available. Try another one."))
+		return
+	}
 	server.broadcast(newErrorResponse("Server is not available. Try another one."))
 }
 
 // SearchAccepted is called when the user's query is accepted into the search queue
 func (server *server) searchAcceptedHandler(_ string) {
+	request, ok := server.peekSearchRequest()
+	if ok {
+		server.sendToClient(request.requester, newStatusResponse(NOTIFY, "Search accepted into the queue."))
+		return
+	}
 	server.broadcast(newStatusResponse(NOTIFY, "Search accepted into the queue."))
 }
 
 // MatchesFound is called when the server finds matches for the user's query
 func (server *server) matchesFoundHandler(num string) {
+	request, ok := server.peekSearchRequest()
+	if ok {
+		server.sendToClient(request.requester, newStatusResponse(NOTIFY, fmt.Sprintf("Found %s results for your query.", num)))
+		return
+	}
 	server.broadcast(newStatusResponse(NOTIFY, fmt.Sprintf("Found %s results for your query.", num)))
 }
 

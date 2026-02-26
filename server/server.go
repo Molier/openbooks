@@ -27,6 +27,9 @@ type server struct {
 
 	// Shared data
 	repository *Repository
+	// Tracks search requests in order so async IRC responses can be routed per session.
+	searchQueue []searchRequest
+	searchMutex sync.Mutex
 	// Tracks download requests in order so async DCC responses can map back to UI items.
 	downloadQueue []downloadRequest
 	downloadMutex sync.Mutex
@@ -77,8 +80,14 @@ type server struct {
 }
 
 type downloadRequest struct {
-	book   string
-	server string
+	book      string
+	server    string
+	requester uuid.UUID
+}
+
+type searchRequest struct {
+	query     string
+	requester uuid.UUID
 }
 
 // Config contains settings for server
@@ -107,6 +116,7 @@ func New(config Config) *server {
 	return &server{
 		repository:      NewRepository(),
 		config:          &config,
+		searchQueue:     make([]searchRequest, 0),
 		downloadQueue:   make([]downloadRequest, 0),
 		register:        make(chan *Client),
 		unregister:      make(chan *Client),
@@ -213,6 +223,9 @@ func (server *server) addClient(client *Client) {
 }
 
 func (server *server) removeClient(client *Client) {
+	server.dropSearchRequestsForClient(client.uuid)
+	server.dropDownloadRequestsForClient(client.uuid)
+
 	server.clientsMutex.Lock()
 	current, ok := server.clients[client.uuid]
 	if !ok {
@@ -256,6 +269,21 @@ func (server *server) snapshotClients() []*Client {
 	return clients
 }
 
+func (server *server) sendToClient(clientID uuid.UUID, message interface{}) bool {
+	client, ok := server.getClientByUUID(clientID)
+	if !ok {
+		return false
+	}
+
+	select {
+	case client.send <- message:
+		return true
+	default:
+		server.log.Printf("Failed to send message to client %s\n", clientID.String())
+		return false
+	}
+}
+
 func (server *server) clientCount() int {
 	server.clientsMutex.RLock()
 	count := len(server.clients)
@@ -272,25 +300,70 @@ func (server *server) closeIRCLogFile() {
 	}
 }
 
-func (server *server) enqueueDownloadRequest(book string) {
+func (server *server) enqueueSearchRequest(query string, requester uuid.UUID) {
+	server.searchMutex.Lock()
+	server.searchQueue = append(server.searchQueue, searchRequest{
+		query:     query,
+		requester: requester,
+	})
+	server.searchMutex.Unlock()
+}
+
+func (server *server) peekSearchRequest() (searchRequest, bool) {
+	server.searchMutex.Lock()
+	defer server.searchMutex.Unlock()
+
+	if len(server.searchQueue) == 0 {
+		return searchRequest{}, false
+	}
+	return server.searchQueue[0], true
+}
+
+func (server *server) claimSearchRequest() (searchRequest, bool) {
+	server.searchMutex.Lock()
+	defer server.searchMutex.Unlock()
+
+	if len(server.searchQueue) == 0 {
+		return searchRequest{}, false
+	}
+
+	request := server.searchQueue[0]
+	server.searchQueue = server.searchQueue[1:]
+	return request, true
+}
+
+func (server *server) dropSearchRequestsForClient(clientID uuid.UUID) {
+	server.searchMutex.Lock()
+	filtered := make([]searchRequest, 0, len(server.searchQueue))
+	for _, request := range server.searchQueue {
+		if request.requester != clientID {
+			filtered = append(filtered, request)
+		}
+	}
+	server.searchQueue = filtered
+	server.searchMutex.Unlock()
+}
+
+func (server *server) enqueueDownloadRequest(book string, requester uuid.UUID) {
 	server.downloadMutex.Lock()
 	server.downloadQueue = append(server.downloadQueue, downloadRequest{
-		book:   book,
-		server: extractServerFromDownloadRequest(book),
+		book:      book,
+		server:    extractServerFromDownloadRequest(book),
+		requester: requester,
 	})
 	server.downloadMutex.Unlock()
 }
 
 // claimDownloadRequestForResponse matches a received DCC response to a pending
 // download request. It prefers matching by IRC sender and falls back to FIFO.
-func (server *server) claimDownloadRequestForResponse(rawLine string) string {
+func (server *server) claimDownloadRequestForResponse(rawLine string) (downloadRequest, bool) {
 	sender := extractSenderFromIRCLine(rawLine)
 
 	server.downloadMutex.Lock()
 	defer server.downloadMutex.Unlock()
 
 	if len(server.downloadQueue) == 0 {
-		return ""
+		return downloadRequest{}, false
 	}
 
 	matchIdx := 0
@@ -306,7 +379,48 @@ func (server *server) claimDownloadRequestForResponse(rawLine string) string {
 	request := server.downloadQueue[matchIdx]
 	server.downloadQueue = append(server.downloadQueue[:matchIdx], server.downloadQueue[matchIdx+1:]...)
 
-	return request.book
+	return request, true
+}
+
+func (server *server) claimDownloadRequestBySender(rawLine string) (downloadRequest, bool) {
+	sender := extractSenderFromIRCLine(rawLine)
+
+	server.downloadMutex.Lock()
+	defer server.downloadMutex.Unlock()
+
+	if len(server.downloadQueue) == 0 {
+		return downloadRequest{}, false
+	}
+
+	matchIdx := -1
+	if sender != "" {
+		for i, request := range server.downloadQueue {
+			if request.server == sender {
+				matchIdx = i
+				break
+			}
+		}
+	}
+
+	if matchIdx == -1 {
+		matchIdx = 0
+	}
+
+	request := server.downloadQueue[matchIdx]
+	server.downloadQueue = append(server.downloadQueue[:matchIdx], server.downloadQueue[matchIdx+1:]...)
+	return request, true
+}
+
+func (server *server) dropDownloadRequestsForClient(clientID uuid.UUID) {
+	server.downloadMutex.Lock()
+	filtered := make([]downloadRequest, 0, len(server.downloadQueue))
+	for _, request := range server.downloadQueue {
+		if request.requester != clientID {
+			filtered = append(filtered, request)
+		}
+	}
+	server.downloadQueue = filtered
+	server.downloadMutex.Unlock()
 }
 
 func (server *server) setIrcActivityNow() {

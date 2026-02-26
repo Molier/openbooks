@@ -31,7 +31,7 @@ export const displayNotification = ({
   detail
 }: Notification) => {
   // Keep mobile UI unobstructed: notifications are available in the drawer.
-  if (window.matchMedia("(max-width: 768px)").matches) {
+  if (window.matchMedia("(max-width: 768px) and (pointer: coarse)").matches) {
     return;
   }
 

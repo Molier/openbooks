@@ -148,6 +148,9 @@ const route = (dispatch: Dispatch<AnyAction>, msg: MessageEvent<any>): void => {
         // Server list has been updated, invalidate cache to refetch
         dispatch(openbooksApi.util.invalidateTags(["servers"]));
         return notification;
+      case MessageType.BOOKS_UPDATED:
+        dispatch(openbooksApi.util.invalidateTags(["books"]));
+        return null;
       default:
         console.error(response);
         return {

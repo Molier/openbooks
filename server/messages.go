@@ -21,6 +21,7 @@ const (
 	RATELIMIT
 	SERVER_LIST
 	DOWNLOAD_PROGRESS
+	BOOKS_UPDATED
 )
 
 type NotificationType int
@@ -90,6 +91,11 @@ type DownloadProgressResponse struct {
 
 // ServerListResponse notifies clients that the server list has been updated
 type ServerListResponse struct {
+	StatusResponse
+}
+
+// BooksUpdatedResponse notifies clients that library contents changed.
+type BooksUpdatedResponse struct {
 	StatusResponse
 }
 
@@ -196,5 +202,15 @@ func newDownloadProgressResponse(book string, received, total int64) DownloadPro
 		Received: received,
 		Total:    total,
 		Percent:  percent,
+	}
+}
+
+func newBooksUpdatedResponse() BooksUpdatedResponse {
+	return BooksUpdatedResponse{
+		StatusResponse: StatusResponse{
+			MessageType:      BOOKS_UPDATED,
+			NotificationType: NOTIFY,
+			Title:            "Library updated",
+		},
 	}
 }

@@ -68,6 +68,10 @@ const useStyles = createStyles((theme) => ({
     width: "100%",
     marginBottom: 12
   },
+  searchingCard: {
+    width: "100%",
+    marginBottom: 12
+  },
   searchGroup: {
     marginBottom: theme.spacing.md,
     alignItems: "stretch",
@@ -79,10 +83,28 @@ const useStyles = createStyles((theme) => ({
   sidebarPulse: {
     animation: "sidebarPulse 2.8s ease-in-out infinite"
   },
+  searchingIcon: {
+    display: "inline-flex",
+    alignItems: "center",
+    justifyContent: "center",
+    width: 34,
+    height: 34,
+    borderRadius: 999,
+    backgroundColor:
+      theme.colorScheme === "dark" ? theme.colors.dark[5] : theme.colors.blue[1]
+  },
+  animatedHero: {
+    animation: "heroFloat 4s ease-in-out infinite"
+  },
   "@keyframes sidebarPulse": {
     "0%": { transform: "scale(1)" },
     "50%": { transform: "scale(1.04)" },
     "100%": { transform: "scale(1)" }
+  },
+  "@keyframes heroFloat": {
+    "0%": { transform: "translateY(0px)" },
+    "50%": { transform: "translateY(-8px)" },
+    "100%": { transform: "translateY(0px)" }
   }
 }));
 
@@ -355,6 +377,31 @@ export default function SearchPage() {
 
       <RetryQueue />
 
+      <AnimatePresence>
+        {isSearching && (
+          <motion.div className={classes.searchingCard} {...defaultAnimation}>
+            <Card withBorder radius="md" p="sm">
+              <Group noWrap spacing="sm">
+                <motion.div
+                  className={classes.searchingIcon}
+                  animate={{ rotate: 360 }}
+                  transition={{ duration: 1.1, ease: "linear", repeat: Infinity }}>
+                  <Books size={16} weight="bold" />
+                </motion.div>
+                <Stack spacing={0}>
+                  <Text size="sm" weight={600}>
+                    Searching IRC lists...
+                  </Text>
+                  <Text size="xs" color="dimmed">
+                    Results will appear only in this session.
+                  </Text>
+                </Stack>
+              </Group>
+            </Card>
+          </motion.div>
+        )}
+      </AnimatePresence>
+
       {!showErrors && formatOptions.length > 2 && (
         <motion.div className={classes.filtersBar} {...defaultAnimation}>
           <ScrollArea type="never">
@@ -432,20 +479,24 @@ export default function SearchPage() {
               Search a book to get started.
             </Title>
             <MediaQuery smallerThan="md" styles={{ display: "none" }}>
-              <Image
-                width={600}
-                fit="contain"
-                src={image}
-                alt="person reading"
-              />
+              <div className={classes.animatedHero}>
+                <Image
+                  width={600}
+                  fit="contain"
+                  src={image}
+                  alt="person reading"
+                />
+              </div>
             </MediaQuery>
             <MediaQuery largerThan="md" styles={{ display: "none" }}>
-              <Image
-                width={300}
-                fit="contain"
-                src={image}
-                alt="person reading"
-              />
+              <div className={classes.animatedHero}>
+                <Image
+                  width={300}
+                  fit="contain"
+                  src={image}
+                  alt="person reading"
+                />
+              </div>
             </MediaQuery>
           </Stack>
         </Center>

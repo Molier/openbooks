@@ -172,6 +172,7 @@ func (c *Client) sendSearchRequest(s *SearchRequest, server *server) {
 		c.send <- newErrorResponse("Unable to send search request to IRC.")
 		return
 	}
+	server.enqueueSearchRequest(s.Query, c.uuid)
 	server.lastSearch = time.Now()
 
 	c.send <- newStatusResponse(NOTIFY, "Search request sent.")
@@ -185,7 +186,7 @@ func (c *Client) sendDownloadRequest(d *DownloadRequest, server *server) {
 		c.send <- newErrorResponse("Unable to send download request to IRC.")
 		return
 	}
-	server.enqueueDownloadRequest(d.Book)
+	server.enqueueDownloadRequest(d.Book, c.uuid)
 	c.send <- newStatusResponse(NOTIFY, "Download request received.")
 }
 

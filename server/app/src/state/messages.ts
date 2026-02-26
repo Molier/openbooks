@@ -12,7 +12,8 @@ export enum MessageType {
   DOWNLOAD,
   RATELIMIT,
   SERVER_LIST,
-  DOWNLOAD_PROGRESS
+  DOWNLOAD_PROGRESS,
+  BOOKS_UPDATED
 }
 
 // Notification is used to show a UI toast notification the the user.
