@@ -29,7 +29,7 @@ docker run -d \
   -v $(pwd)/books:/books \
   -e AUTH_USER=admin \
   -e AUTH_PASS="ChangeMe123!" \
-  YOUR_DOCKERHUB_USERNAME/openbooks-fork \
+  molier/openbooks \
   --random-name \
   --server irc.irchighway.net:6667 \
   --tls=false \
@@ -48,7 +48,7 @@ Create `docker-compose.yml`:
 version: '3.8'
 services:
   openbooks:
-    image: YOUR_DOCKERHUB_USERNAME/openbooks-fork:latest
+    image: molier/openbooks:latest
     container_name: openbooks
     ports:
       - "8383:80"
@@ -81,7 +81,7 @@ docker-compose up -d
 version: '3.8'
 services:
   openbooks:
-    image: YOUR_DOCKERHUB_USERNAME/openbooks-fork:latest
+    image: molier/openbooks:latest
     container_name: openbooks
     ports:
       - "8080:80"
@@ -105,7 +105,7 @@ services:
 version: '3.8'
 services:
   openbooks:
-    image: YOUR_DOCKERHUB_USERNAME/openbooks-fork:latest
+    image: molier/openbooks:latest
     container_name: openbooks
     volumes:
       - ./books:/books
@@ -161,7 +161,7 @@ docker run -d \
   --name openbooks \
   -p 8080:80 \
   -v $(pwd)/books:/books \
-  YOUR_DOCKERHUB_USERNAME/openbooks-fork \
+  molier/openbooks \
   --random-name \
   --server irc.irchighway.net:6667 \
   --tls=false \
@@ -177,7 +177,7 @@ docker run -d \
   -v $(pwd)/books:/books \
   -e AUTH_USER=admin \
   -e AUTH_PASS="SecurePass123!" \
-  YOUR_DOCKERHUB_USERNAME/openbooks-fork \
+  molier/openbooks \
   --random-name \
   --server irc.irchighway.net:6667 \
   --tls=false \
@@ -191,7 +191,7 @@ docker run -d \
   --name openbooks \
   -p 8080:80 \
   -v $(pwd)/books:/books \
-  YOUR_DOCKERHUB_USERNAME/openbooks-fork \
+  molier/openbooks \
   --name MyBookReader \
   --server irc.irchighway.net:6667 \
   --tls=false \
@@ -207,7 +207,7 @@ docker run -d \
   -v $(pwd)/books:/books \
   -e AUTH_USER=admin \
   -e AUTH_PASS="SecurePass123!" \
-  YOUR_DOCKERHUB_USERNAME/openbooks-fork \
+  molier/openbooks \
   --random-name \
   --server irc.irchighway.net:6667 \
   --tls=false \
@@ -222,7 +222,7 @@ docker run -d \
 
 ```bash
 # Clone repository
-git clone https://github.com/YOUR_GITHUB_USERNAME/openbooks-fork.git
+git clone https://github.com/Molier/openbooks.git
 cd openbooks
 
 # Build image
@@ -332,7 +332,7 @@ docker logs --tail 100 openbooks
 docker rm -f openbooks
 
 # Remove image
-docker rmi YOUR_DOCKERHUB_USERNAME/openbooks-fork:latest
+docker rmi molier/openbooks:latest
 ```
 
 ### Update to Latest Version
@@ -350,7 +350,7 @@ docker stop openbooks
 docker rm openbooks
 
 # Pull latest image
-docker pull YOUR_DOCKERHUB_USERNAME/openbooks-fork:latest
+docker pull molier/openbooks:latest
 
 # Run new container
 docker run -d \
@@ -359,7 +359,7 @@ docker run -d \
   -v $(pwd)/books:/books \
   -e AUTH_USER=admin \
   -e AUTH_PASS="your-password" \
-  YOUR_DOCKERHUB_USERNAME/openbooks-fork \
+  molier/openbooks \
   --random-name \
   --server irc.irchighway.net:6667 \
   --tls=false \
@@ -378,7 +378,7 @@ docker run -d \
 
 **Pull specific version:**
 ```bash
-docker pull YOUR_DOCKERHUB_USERNAME/openbooks-fork:4.3.0
+docker pull molier/openbooks:4.3.0
 ```
 
 ## Supported Platforms
@@ -496,7 +496,7 @@ docker run -d \
   --cpus="1.0" \
   -p 8383:80 \
   -v $(pwd)/books:/books \
-  YOUR_DOCKERHUB_USERNAME/openbooks-fork \
+  molier/openbooks \
   --random-name \
   server --persist
 ```
@@ -621,8 +621,8 @@ services:
 - **Main Documentation:** [README.md](README.md)
 - **Configuration Guide:** See README.md Configuration section
 - **Troubleshooting:** See README.md Troubleshooting section
-- **Docker Hub:** https://hub.docker.com/r/YOUR_DOCKERHUB_USERNAME/openbooks-fork
-- **GitHub:** https://github.com/YOUR_GITHUB_USERNAME/openbooks-fork
+- **Docker Hub:** https://hub.docker.com/r/molier/openbooks
+- **GitHub:** https://github.com/Molier/openbooks
 
 ---
 
@@ -634,7 +634,7 @@ services:
 version: '3.8'
 services:
   openbooks:
-    image: YOUR_DOCKERHUB_USERNAME/openbooks-fork:latest
+    image: molier/openbooks:latest
     container_name: openbooks
     ports:
       - "127.0.0.1:8383:80"  # Localhost only
@@ -662,7 +662,7 @@ services:
 version: '3.8'
 services:
   openbooks:
-    image: YOUR_DOCKERHUB_USERNAME/openbooks-fork:latest
+    image: molier/openbooks:latest
     container_name: openbooks
     volumes:
       - books_data:/books
@@ -728,10 +728,10 @@ A: IRC Highway's TLS ports (6697, 9999) don't work with Go's TLS implementation.
 A: Yes, but use different IRC usernames and ports:
 ```bash
 # Container 1
-docker run -d --name openbooks1 -p 8383:80 YOUR_DOCKERHUB_USERNAME/openbooks-fork --name user1 ...
+docker run -d --name openbooks1 -p 8383:80 molier/openbooks --name user1 ...
 
 # Container 2
-docker run -d --name openbooks2 -p 8384:80 YOUR_DOCKERHUB_USERNAME/openbooks-fork --name user2 ...
+docker run -d --name openbooks2 -p 8384:80 molier/openbooks --name user2 ...
 ```
 
 **Q: How do I change the download directory?**
