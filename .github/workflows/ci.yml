@@ -13,8 +13,17 @@ jobs:
       - uses: actions/setup-go@v5
         with:
           go-version-file: go.mod
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 20
+          cache: npm
+          cache-dependency-path: server/app/package-lock.json
       - name: Verify modules
         run: go mod tidy && git diff --exit-code
+      - name: Build frontend assets for Go embed
+        run: |
+          npm ci --prefix server/app
+          npm run build --prefix server/app
       - name: Run tests
         run: go test ./...
 
